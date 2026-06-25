@@ -1,0 +1,44 @@
+# wealth bot configuration — edit and run: wealth run --config configs/bot.yaml
+#
+# This default is SAFE: paper trading (simulated money, live prices). To go live
+# later, change `broker`/`mode` (see the bottom of this file) — that is the only
+# switch needed, and it is your deliberate decision.
+
+market: crypto                 # crypto | stocks
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+strategy: trend_breakout       # trend_breakout | dual_momentum | mean_reversion
+params:
+  entry_n: 20
+  exit_n: 10
+timeframe: 1d                  # 1h, 4h, 1d, 1w ...
+cash: 10000                    # starting (paper) capital
+
+commission_bps: 5              # 0.05% per trade
+slippage_bps: 5                # 0.05% assumed slippage
+
+# Execution. DEFAULT = paper (no real money).
+broker: paper                  # paper | ccxt | alpaca
+mode: paper                    # paper | live
+exchange: binance              # used by crypto provider/broker
+
+lookback_bars: 400             # trailing bars fed to the strategy each tick
+state_dir: state               # broker state + journal live here
+# interval_seconds:            # default: derived from timeframe (1d -> 86400)
+# periods_per_year: 365        # default: inferred from data
+
+# Parameter grid used by `wealth tune` (walk-forward, out-of-sample).
+tune_grid:
+  entry_n: [10, 20, 40, 55]
+  exit_n: [5, 10, 20]
+
+# ----------------------------------------------------------------------------
+# GOING LIVE (later, your call). Set:
+#   broker: ccxt        # crypto, or `alpaca` for stocks
+#   mode: live          # was: paper
+# and export API keys in your environment (never commit them):
+#   crypto : WEALTH_CCXT_KEY / WEALTH_CCXT_SECRET
+#   stocks : WEALTH_ALPACA_KEY / WEALTH_ALPACA_SECRET
+# For crypto, `broker: ccxt` + `mode: paper` uses the exchange TESTNET first.
+# ----------------------------------------------------------------------------

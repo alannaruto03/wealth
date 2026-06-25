@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Secrets
+.env
+
+# Project artifacts
+data_cache/
+reports/
+state/
+*.parquet
+
+# OS
+.DS_Store

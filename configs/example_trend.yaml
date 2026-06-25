@@ -1,0 +1,16 @@
+# Minimal trend-following example on a single crypto pair (paper).
+market: crypto
+symbols:
+  - BTC/USDT
+strategy: trend_breakout
+params:
+  entry_n: 55
+  exit_n: 20
+timeframe: 1d
+cash: 10000
+broker: paper
+mode: paper
+state_dir: state/example_trend
+tune_grid:
+  entry_n: [20, 40, 55]
+  exit_n: [10, 20]
