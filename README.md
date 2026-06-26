@@ -50,7 +50,36 @@ wealth tune --config configs/bot.yaml --metric calmar --out reports/tune
 
 # 4. See how the paper bot is doing
 wealth report --config configs/bot.yaml
+
+# 5. Open the dashboard (beautiful, interactive)
+wealth dashboard --config configs/bot.yaml
 ```
+
+## Dashboard
+
+A dark, interactive Streamlit + Plotly dashboard to monitor *and* drive the bot.
+
+```bash
+pip install -e '.[dashboard]'           # one-time: installs streamlit + plotly
+wealth dashboard --config configs/bot.yaml
+# or directly:  streamlit run wealth/dashboard/app.py
+```
+
+Five tabs:
+
+- **Overview** — hero KPIs (equity, return, CAGR, Sharpe, max drawdown, win
+  rate), equity curve with drawdown, live allocation, open positions.
+- **Live bot** — equity from the journal, positions + unrealized PnL, allocation
+  donut, recent orders, and a **Step one tick** button (paper by default).
+- **Backtest** — pick market/symbols/strategy/params/dates/costs, then see
+  strategy vs buy-&-hold, drawdown, a monthly-returns heatmap, and trades.
+- **Tuning** — run walk-forward and view in- vs out-of-sample scores per fold,
+  the ACCEPTED/REJECTED verdict, and recommended params.
+- **Config** — view/edit the YAML with a paper-vs-live safety gate.
+
+> **Demo data** toggle (sidebar, on by default until a journal exists) populates
+> every panel with synthetic data so the dashboard is fully usable offline.
+> Live data fetch and the *Step one tick* button need market access.
 
 ## Strategies
 

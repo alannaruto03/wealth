@@ -9,6 +9,7 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import List, Optional
 
@@ -194,6 +195,30 @@ def _print_safety_banner(cfg: BotConfig) -> None:
         print("[LIVE] !!! real money mode — orders will use real funds !!!")
 
 
+def cmd_dashboard(args) -> int:
+    """Launch the Streamlit dashboard (wealth[dashboard] extra required)."""
+    import subprocess
+    from importlib import util as importlib_util
+
+    if importlib_util.find_spec("streamlit") is None:
+        print("dashboard needs Streamlit + Plotly. Install with:\n"
+              "  pip install -e '.[dashboard]'", file=sys.stderr)
+        return 1
+
+    app_path = os.path.join(os.path.dirname(__file__), "dashboard", "app.py")
+    env = dict(os.environ)
+    if args.config:
+        env["WEALTH_DASHBOARD_CONFIG"] = args.config
+    cmd = [
+        sys.executable, "-m", "streamlit", "run", app_path,
+        "--server.port", str(args.port),
+    ]
+    if args.headless:
+        cmd += ["--server.headless", "true"]
+    print(f"launching dashboard on http://localhost:{args.port} …")
+    return subprocess.call(cmd, env=env)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wealth", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -229,6 +254,12 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--config", required=True)
     rep.add_argument("--out", default=None)
     rep.set_defaults(func=cmd_report)
+
+    dash = sub.add_parser("dashboard", help="launch the Streamlit dashboard")
+    dash.add_argument("--config", default="configs/bot.yaml")
+    dash.add_argument("--port", type=int, default=8501)
+    dash.add_argument("--headless", action="store_true", help="no auto-open browser")
+    dash.set_defaults(func=cmd_dashboard)
     return p
 
 

@@ -1,0 +1,15 @@
+# Dark fintech theme for the wealth dashboard.
+[theme]
+base = "dark"
+primaryColor = "#00D09C"          # mint green — accents, gains
+backgroundColor = "#0E1117"        # app background
+secondaryBackgroundColor = "#161B22"  # cards / surfaces
+textColor = "#E6EDF3"
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false
