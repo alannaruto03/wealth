@@ -16,10 +16,13 @@ dependencies = [
     "matplotlib>=3.7",
     "PyYAML>=6.0",
     "pyarrow>=14.0",
+    "httpx>=0.27",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]
 stocks = ["alpaca-py>=0.20"]
+polymarket-live = ["py-clob-client-v2>=0.1"]
 dashboard = ["streamlit>=1.36", "plotly>=5.22"]
 dev = ["pytest>=8.0"]
 

@@ -1,0 +1,59 @@
+# Polymarket 15-minute "Bitcoin Up or Down" bot — wealth poly run --config configs/polymarket.yaml
+#
+# DEFAULT IS SAFE: paper mode simulates fills against the LIVE order book and
+# settles on the real market outcome. Real data, fake money. Going live is a
+# deliberate change YOU make after a real paper track record (see bottom).
+
+asset: BTC                    # BTC | ETH | SOL | XRP
+horizon: 15m                  # 15m | 5m | 1h
+mode: paper                   # paper | live
+cash: 1000                    # paper starting capital ($)
+
+# --- fair-value model (digital option on Binance spot vs the window strike) --
+vol_halflife_s: 90            # EWMA half-life for short-horizon realized vol
+vol_floor: 0.00001
+vol_seed: 0.00008
+
+# --- maker quoting ------------------------------------------------------------
+quote_size: 20                # shares per resting quote (exchange minimum: 5)
+min_half_spread: 0.02         # never quote tighter than 2c to fair value
+vol_half_spread_mult: 1.2     # spread widens with vol * sqrt(time-left)
+inventory_skew: 0.04          # lean quotes away from accumulated inventory
+requote_ticks: 2              # cancel/replace when fair value drifts 2 ticks
+impulse_bps: 8                # pull ALL quotes when spot moves 8bps in...
+impulse_window_s: 3           # ...3 seconds (adverse-selection guard)
+no_quote_final_s: 45          # no maker quotes in the last 45s of a window
+
+# --- selective taker (must beat the p*(1-p) taker fee curve) -------------------
+taker_edge_margin: 0.04       # model edge required beyond the fee
+taker_max_price: 0.98
+taker_final_cutoff_s: 5
+
+# --- complete-set capture (YES+NO under $1 = locked profit) --------------------
+complete_set_margin: 0.015    # buy the pair when asks sum < 0.985
+complete_set_max_shares: 100
+
+# --- fees (takers only; makers pay zero) ---------------------------------------
+taker_fee_rate: 0.072         # crypto-tier rate: fee/share = rate * p * (1-p)
+
+# --- hard risk limits ----------------------------------------------------------
+max_inventory: 200            # max shares per side per window
+max_window_notional: 150      # max $ spent per window
+daily_loss_limit: 50          # kill switch: stop for the day past this loss
+feed_stale_s: 10              # halt quoting when the spot feed goes quiet
+
+# --- infrastructure ------------------------------------------------------------
+state_dir: state/polymarket
+poll_interval_s: 1.0          # REST fallback cadence (WS preferred when available)
+prefer_websocket: true
+resolution_timeout_s: 180
+
+# ------------------------------------------------------------------------------
+# GOING LIVE (later, your call — and read the README's honest-expectations
+# section first). Set `mode: live`, install the live extra:
+#     pip install -e '.[polymarket-live]'
+# and export (never commit):
+#     WEALTH_POLY_PK=<polygon private key>
+#     WEALTH_POLY_FUNDER=<proxy wallet address>   # only for proxy wallets
+# Requires a funded Polymarket account (pUSD) outside geo-blocked regions.
+# ------------------------------------------------------------------------------

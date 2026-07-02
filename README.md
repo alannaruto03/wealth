@@ -81,6 +81,59 @@ Five tabs:
 > every panel with synthetic data so the dashboard is fully usable offline.
 > Live data fetch and the *Step one tick* button need market access.
 
+## Polymarket 15-minute crypto bot
+
+An event-driven bot for Polymarket's recurring **"Bitcoin Up or Down"
+15-minute markets** (`wealth/polymarket/`). Paper mode simulates fills against
+the **live** order book and settles on the **real** market outcome — real
+data, fake money.
+
+```bash
+wealth poly run --config configs/polymarket.yaml --windows 4   # paper, 4 windows
+wealth poly report --config configs/polymarket.yaml            # PnL per window
+```
+
+What it does (the strategy archetype the consistently profitable accounts on
+these markets use, distilled):
+
+- **Fair value** — prices UP as a digital option: `P(settle >= strike)` from
+  Binance spot distance-to-strike and EWMA short-horizon realized vol.
+- **Maker quoting** — rests bids on *both* outcome tokens around fair value
+  (makers pay no fee and earn rebates); leans quotes away from inventory.
+- **Quote pulling** — cancels everything on a spot impulse before requoting
+  (stale quotes against faster flow are how makers bleed).
+- **Complete-set capture** — buys YES+NO when the asks sum to under $1:
+  locked profit at settlement, regardless of outcome.
+- **Selective taking** — crosses the spread only when model edge beats the
+  `p·(1−p)` taker fee curve (post-Jan-2026 this mostly means deep favorites
+  near expiry) plus a margin.
+- **Hard risk limits** — per-side inventory caps, per-window notional budget,
+  a daily-loss kill switch, a stale-feed circuit breaker, and no maker quotes
+  in the final seconds of a window.
+
+### Honest expectations (read this)
+
+The "free money" era on these markets is **over**: Polymarket added dynamic
+taker fees in Jan 2026 specifically to kill latency arbitrage, and rebuilt
+its exchange (CLOB V2 + pUSD) in Apr 2026. The accounts still profiting run
+24/7 low-latency infrastructure and months of tuning; a Python bot polling
+over HTTP will be slower to pull quotes and **will** suffer adverse
+selection. That is exactly why this bot is paper-first: run it for days,
+read `wealth poly report`, and only consider real money if the *measured*
+track record says so. Expect small numbers — possibly negative. Nothing here
+is financial advice, and no profitability is promised.
+
+Going live (much later, your call): `mode: live` in the config,
+`pip install -e '.[polymarket-live]'`, `WEALTH_POLY_PK` in a local `.env`,
+a funded account, and a jurisdiction Polymarket serves — the live adapter is
+experimental and deliberately refuses to start from the CLI until wired in
+by hand (see `wealth/polymarket/live.py`).
+
+Network note: the bot needs outbound access to `gamma-api.polymarket.com`,
+`clob.polymarket.com`, `api.binance.com` and (preferred, for lower latency)
+the websocket hosts `ws-subscriptions-clob.polymarket.com`,
+`ws-live-data.polymarket.com`, `stream.binance.com`.
+
 ## Strategies
 
 | name             | idea                                                       |

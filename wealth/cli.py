@@ -5,6 +5,7 @@ Subcommands:
   run       run the bot hands-off (paper by default), once or looping
   tune      walk-forward re-optimize parameters (out-of-sample, anti-overfit)
   report    summarize the live/paper bot's journal
+  poly      Polymarket 15-minute crypto bot (poly run | poly report)
 """
 from __future__ import annotations
 
@@ -195,6 +196,47 @@ def _print_safety_banner(cfg: BotConfig) -> None:
         print("[LIVE] !!! real money mode — orders will use real funds !!!")
 
 
+def cmd_poly_run(args) -> int:
+    import asyncio
+
+    from wealth.live.journal import Journal
+    from wealth.polymarket.config import PolyBotConfig
+    from wealth.polymarket.runner import PolyRunner
+
+    cfg = PolyBotConfig.from_yaml(args.config)
+    if cfg.mode != "paper":
+        # The live adapter (wealth/polymarket/live.py) is EXPERIMENTAL and has
+        # never been exercised against a funded account. It must be wired in
+        # deliberately, in code, after a real paper track record.
+        raise SystemExit(
+            "[LIVE] refusing to start: live mode is experimental. Build a paper "
+            "track record first, then wire LiveExecutor into PolyRunner yourself "
+            "(see wealth/polymarket/live.py docstring).")
+
+    print("[PAPER] simulated fills on the LIVE order book — no real funds at risk.")
+    journal = Journal(cfg.journal_path)
+    runner = PolyRunner(cfg, journal)  # defaults to PaperExecutor
+    windows = args.windows if args.windows and args.windows > 0 else None
+    duration = args.duration if args.duration and args.duration > 0 else None
+    if windows is None and duration is None:
+        print("running until Ctrl-C (pass --windows N or --duration S to bound)")
+    try:
+        asyncio.run(runner.run(windows=windows, duration_s=duration))
+    except KeyboardInterrupt:
+        print("\nstopped.")
+    return 0
+
+
+def cmd_poly_report(args) -> int:
+    from wealth.live.journal import Journal
+    from wealth.polymarket.config import PolyBotConfig
+    from wealth.polymarket.report import build_poly_report
+
+    cfg = PolyBotConfig.from_yaml(args.config)
+    print(build_poly_report(Journal(cfg.journal_path)))
+    return 0
+
+
 def cmd_dashboard(args) -> int:
     """Launch the Streamlit dashboard (wealth[dashboard] extra required)."""
     import subprocess
@@ -254,6 +296,21 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--config", required=True)
     rep.add_argument("--out", default=None)
     rep.set_defaults(func=cmd_report)
+
+    poly = sub.add_parser("poly", help="Polymarket 15-minute crypto bot")
+    poly_sub = poly.add_subparsers(dest="poly_command", required=True)
+
+    poly_run = poly_sub.add_parser("run", help="run the bot (paper by default)")
+    poly_run.add_argument("--config", default="configs/polymarket.yaml")
+    poly_run.add_argument("--windows", type=int, default=0,
+                          help="stop after N settled windows (0 = run forever)")
+    poly_run.add_argument("--duration", type=float, default=0,
+                          help="stop after this many seconds (0 = no limit)")
+    poly_run.set_defaults(func=cmd_poly_run)
+
+    poly_rep = poly_sub.add_parser("report", help="summarize the poly bot journal")
+    poly_rep.add_argument("--config", default="configs/polymarket.yaml")
+    poly_rep.set_defaults(func=cmd_poly_report)
 
     dash = sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     dash.add_argument("--config", default="configs/bot.yaml")
