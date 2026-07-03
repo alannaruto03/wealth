@@ -260,6 +260,10 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--port", type=int, default=8501)
     dash.add_argument("--headless", action="store_true", help="no auto-open browser")
     dash.set_defaults(func=cmd_dashboard)
+
+    from wealth.polymarket.cli import add_subparser as add_polymarket_subparser
+
+    add_polymarket_subparser(sub)
     return p
 
 

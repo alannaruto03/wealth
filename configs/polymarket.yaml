@@ -1,0 +1,42 @@
+# Polymarket BTC Up/Down bot — paper by default.
+#
+# Paper mode simulates fills against Polymarket's REAL live order books; no
+# wallet or key is needed. Going live is `mode: live` plus a funded Polymarket
+# account and POLYMARKET_PRIVATE_KEY in the environment — and an interactive
+# confirmation on start.
+
+mode: paper                 # paper | live
+series: ["hourly", "15m"]   # which BTC up/down series to trade
+cash: 1000.0                # paper bankroll (USDC)
+interval_seconds: 3
+
+# fair value: digital-option estimate from live spot + realized vol
+fair_model: gaussian_digital
+spot_exchange: binance
+spot_symbol: BTC/USDT
+
+# signal
+edge_threshold: 0.03        # enter when fair - ask - fee exceeds this
+take_profit_edge: null      # sell when bid >= fair + this; null = hold to resolution
+min_seconds_to_expiry: 20
+
+# sizing / risk
+kelly_fraction: 0.25
+max_stake_per_trade: 50.0
+max_market_exposure: 100.0
+max_total_exposure: 300.0
+daily_loss_limit: 0.05      # 5% of day-start equity stops entries for the day
+max_spread: 0.05
+min_book_depth_usd: 100.0
+stale_spot_max_s: 10
+stale_book_max_s: 10
+fee_bps: 0                  # Polymarket taker fee (0 as of mid-2026; verify)
+
+state_dir: state/polymarket
+record_books: false         # also snapshot books to recordings/ while running
+
+# live-only (ignored on paper)
+order_type: FOK
+private_key_env: POLYMARKET_PRIVATE_KEY
+funder: null                # your Polymarket proxy wallet (0x…)
+signature_type: 1           # 0=EOA, 1=email/Magic, 2=browser proxy

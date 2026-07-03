@@ -16,11 +16,13 @@ dependencies = [
     "matplotlib>=3.7",
     "PyYAML>=6.0",
     "pyarrow>=14.0",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
 stocks = ["alpaca-py>=0.20"]
 dashboard = ["streamlit>=1.36", "plotly>=5.22"]
+polymarket = ["py-clob-client>=0.17"]  # live trading only; paper mode runs on core deps
 dev = ["pytest>=8.0"]
 
 [project.scripts]

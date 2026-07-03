@@ -5,6 +5,8 @@ ccxt>=4.2
 matplotlib>=3.7
 PyYAML>=6.0
 pyarrow>=14.0
+requests>=2.31
 pytest>=8.0
 # optional extras (install when going to stocks/live):
-#   alpaca-py>=0.20   # stocks paper/live execution
+#   alpaca-py>=0.20        # stocks paper/live execution
+#   py-clob-client>=0.17   # polymarket live execution (paper mode needs nothing extra)

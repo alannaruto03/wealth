@@ -24,8 +24,19 @@ from wealth.strategies.base import get_strategy
 # --------------------------------------------------------------------------- #
 # config + journal + positions
 # --------------------------------------------------------------------------- #
-def load_config(path: str) -> BotConfig:
-    return BotConfig.from_yaml(path)
+def load_config(path: str):
+    """Load either bot flavor: portfolio BotConfig or PolymarketConfig.
+
+    Both expose journal_path/state_path/cash, which is all the journal-driven
+    panels (equity, orders) need. BotConfig stays first so existing configs
+    keep their exact behavior.
+    """
+    try:
+        return BotConfig.from_yaml(path)
+    except (ValueError, TypeError):
+        from wealth.polymarket.config import PolymarketConfig
+
+        return PolymarketConfig.from_yaml(path)
 
 
 @dataclass

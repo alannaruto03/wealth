@@ -91,6 +91,73 @@ Five tabs:
 | `grid`           | crypto grid trading *(stub)*                                |
 | `funding_arb`    | cash-and-carry funding arbitrage *(stub)*                  |
 
+## Polymarket BTC Up/Down bot
+
+A second bot lives in `wealth/polymarket/`: it trades Polymarket's short-term
+Bitcoin **"Up or Down"** prediction markets (hourly and 15-minute series). The
+strategy is the classic short-window mispricing loop:
+
+1. Estimate a **fair probability** that BTC finishes the period up — a
+   digital-option model driven by live spot (via ccxt) and EWMA realized vol.
+2. When the CLOB ask deviates from fair value by more than an edge threshold,
+   **cross the spread** before the book readjusts.
+3. Size with **fractional Kelly**, capped per trade / per market / total.
+4. Hold to resolution (or take profit), settle at $1/$0, repeat.
+
+```bash
+# what would the bot see right now? (read-only; also verifies market discovery)
+wealth polymarket discover --config configs/polymarket.yaml
+
+# paper-trade against REAL live order books (no wallet, no keys)
+wealth polymarket run --config configs/polymarket.yaml --once
+wealth polymarket run --config configs/polymarket.yaml
+
+# record books while running (or standalone), then replay = honest backtest
+wealth polymarket record --config configs/polymarket.yaml
+wealth polymarket replay --config configs/polymarket.yaml \
+  --file state/polymarket/recordings/books.jsonl
+
+# track record
+wealth polymarket report --config configs/polymarket.yaml
+wealth dashboard --config configs/polymarket.yaml   # same dashboard, same journal format
+```
+
+Risk controls built in: per-trade/per-market/total exposure caps, a **daily
+loss kill-switch** (entries blocked for the rest of the UTC day), spread/depth/
+staleness guards, and a no-entry window just before expiry.
+
+### Going live on Polymarket
+
+Paper first — collect a real multi-week track record. Then:
+
+```yaml
+# configs/polymarket.yaml
+mode: live
+funder: 0xYourPolymarketProxyWallet
+```
+
+```bash
+pip install -e '.[polymarket]'                 # py-clob-client
+export POLYMARKET_PRIVATE_KEY=0x...            # never in a config file
+wealth polymarket run --config configs/polymarket.yaml   # asks you to type LIVE
+```
+
+v1 live caveats: winning shares must be redeemed on-chain via the Polymarket
+UI (the bot books the expected payout locally), and positions are tracked
+locally — reconcile against your Polymarket account.
+
+### Honest expectations (please read)
+
+This bot exists because of viral posts claiming huge PnL from this exact
+setup. Those claims are **unverifiable marketing**; treat them as such.
+Structurally, the odds are against you: paper fills against book snapshots are
+an **optimistic upper bound** (no queue, no latency, no adverse selection —
+the fastest players you're racing do this with colocated infrastructure), the
+fair-value model is deliberately simple, and Polymarket resolves against its
+own price source which can differ from your feed by a few dollars right at
+the boundary. Expect the paper edge to shrink or vanish live. That is the
+point of paper-first: reject the idea cheaply if the track record says no.
+
 ## Going live (your decision, later)
 
 Edit `configs/bot.yaml`:
@@ -115,7 +182,9 @@ wealth/
   live/        runner (one tick), scheduler (cadence), journal (track record)
   tuning/      walk-forward optimizer (out-of-sample, anti-overfit)
   reporting/   metrics tables + equity/drawdown plots
-  cli.py       backtest | run | tune | report
+  polymarket/  BTC up/down bot: gamma/clob clients, fair value, Kelly sizing,
+               paper/live executors, runner, recorder/replay
+  cli.py       backtest | run | tune | report | polymarket ...
 ```
 
 ## Disclaimer
