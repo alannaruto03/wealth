@@ -70,9 +70,22 @@ def _load_cfg(cfg_path: str):
 # --------------------------------------------------------------------------- #
 # tabs
 # --------------------------------------------------------------------------- #
+def _effective_mode(cfg) -> str:
+    """Paper unless the config really routes to a live venue. Works for both
+    config flavors: the portfolio bot has a broker field, polymarket only mode."""
+    if cfg is None:
+        return "paper"
+    broker = getattr(cfg, "broker", None)  # PolymarketConfig has no broker
+    if broker is not None and broker == "paper":
+        return "paper"
+    return cfg.mode
+
+
 def tab_overview(cfg, demo: bool):
-    mode = "paper" if (cfg is None or cfg.broker == "paper") else cfg.mode
-    ui.hero(st, "Wealth", "Systematic trading — live performance & research", mode)
+    subtitle = "Polymarket BTC up/down — live performance" if (
+        cfg is not None and da.is_polymarket(cfg)
+    ) else "Systematic trading — live performance & research"
+    ui.hero(st, "Wealth", subtitle, _effective_mode(cfg))
 
     if demo or cfg is None:
         bv = _cached_demo()
@@ -84,8 +97,9 @@ def tab_overview(cfg, demo: bool):
         equity = jv.equity
         bench = None
         from wealth.metrics import performance as perf
-        summary = perf.summary(equity, periods_per_year=cfg.periods_per_year) if equity.size \
-            else {}
+        summary = perf.summary(
+            equity, periods_per_year=getattr(cfg, "periods_per_year", None)
+        ) if equity.size else {}
         positions = da.load_positions(cfg, jv.last_prices)
         weights = jv.target_weights
 
@@ -146,6 +160,15 @@ def tab_live(cfg, demo: bool):
     else:
         st.caption("No orders recorded yet.")
 
+    if da.is_polymarket(cfg):
+        ui.section(st, "Bot process")
+        st.caption(
+            "The polymarket bot ticks every few seconds — run it as its own process: "
+            "`wealth polymarket run --config configs/polymarket.yaml`. "
+            "This page reads its journal; hit Refresh in the sidebar for the latest."
+        )
+        return
+
     ui.section(st, "Manual control")
     st.caption("Run a single bot tick now (paper by default). Needs market data access.")
     disabled = demo
@@ -157,6 +180,58 @@ def tab_live(cfg, demo: bool):
             st.json(rec)
         except Exception as exc:  # noqa: BLE001
             st.error(f"Tick failed: {exc}")
+
+
+def tab_polymarket(cfg, demo: bool):
+    """Polymarket-specific view. Mobile-first: single column, responsive KPI
+    grid, no side-by-side st.columns rows (those cramp on phones)."""
+    ui.section(st, "BTC Up/Down markets")
+    if cfg is None or not da.is_polymarket(cfg):
+        st.info("Point the sidebar at configs/polymarket.yaml to see this tab.")
+        return
+
+    pv = da.load_polymarket_view(cfg)
+    jv = da.load_journal(cfg)
+
+    final = float(jv.equity.iloc[-1]) if jv.equity.size else cfg.cash
+    ui.kpi_row(st, [
+        ui.kpi("Equity", ui._fmt_money(final)),
+        ui.kpi("Realized PnL", f"${pv.realized_pnl:,.2f}", tone=pv.realized_pnl),
+        ui.kpi("Markets traded", str(pv.wins + pv.losses)),
+        ui.kpi("Win rate", f"{pv.win_rate:.0%}" if pv.win_rate is not None else "—"),
+    ])
+
+    st.plotly_chart(charts.equity_area(jv.equity), use_container_width=True, key="pm_equity")
+
+    ui.section(st, "Right now")
+    if pv.spot is not None:
+        line = f"**BTC spot** {pv.spot:,.0f}"
+        if pv.sigma is not None:
+            line += f"  ·  **σ/√s** {pv.sigma:.6f}"
+        st.markdown(line)
+        fair_txt = "  ·  ".join(f"{slug}: P(up) {p:.2f}" for slug, p in pv.fair.items()) or "—"
+        st.caption(f"Model fair value — {fair_txt}")
+    else:
+        st.caption("No ticks yet — start the bot: "
+                   "`wealth polymarket run --config configs/polymarket.yaml`")
+
+    ui.section(st, "Resolved markets")
+    if not pv.resolutions.empty:
+        show = pv.resolutions.tail(25).iloc[::-1].copy()
+        show["pnl"] = show["pnl"].round(2)
+        st.dataframe(show, use_container_width=True, hide_index=True, key="pm_res")
+    else:
+        st.caption("No markets resolved yet.")
+
+    if pv.risk_blocks:
+        ui.section(st, "Risk blocks")
+        st.dataframe(
+            pd.DataFrame(
+                sorted(pv.risk_blocks.items(), key=lambda kv: -kv[1]),
+                columns=["reason", "count"],
+            ),
+            use_container_width=True, hide_index=True, key="pm_risk",
+        )
 
 
 def tab_backtest(cfg, demo: bool):
@@ -249,12 +324,11 @@ def tab_config(cfg, cfg_path: str):
     if cfg is None:
         st.info("No valid config loaded.")
         return
-    st.markdown(ui.mode_badge(cfg.mode if cfg.broker != "paper" else "paper"),
-                unsafe_allow_html=True)
-    if cfg.mode == "live" or cfg.broker != "paper":
-        st.error("⚠️ This config is set to trade with a real broker. Orders may use real funds.")
+    st.markdown(ui.mode_badge(_effective_mode(cfg)), unsafe_allow_html=True)
+    if _effective_mode(cfg) != "paper":
+        st.error("⚠️ This config is set to trade with real funds.")
     else:
-        st.success("Safe: paper trading — simulated money on live prices.")
+        st.success("Safe: paper trading — simulated money on live prices/books.")
 
     st.write("**Current settings**")
     st.json({k: v for k, v in cfg.to_dict().items()})
@@ -266,10 +340,13 @@ def tab_config(cfg, cfg_path: str):
         confirm_live = st.checkbox("I understand this may enable live trading", value=False)
         if st.button("💾 Save config"):
             try:
-                from wealth.config import BotConfig
                 import yaml
+                if da.is_polymarket(cfg):
+                    from wealth.polymarket.config import PolymarketConfig as ConfigCls
+                else:
+                    from wealth.config import BotConfig as ConfigCls
                 test = yaml.safe_load(edited) or {}
-                BotConfig(**{k: v for k, v in test.items()})  # raises on bad keys/types
+                ConfigCls(**{k: v for k, v in test.items()})  # raises on bad keys/types
                 if (test.get("mode") == "live" or test.get("broker") not in (None, "paper")) \
                         and not confirm_live:
                     st.warning("Tick the confirmation box to save a live-trading config.")
@@ -359,6 +436,21 @@ def main():
     cfg, err = _load_cfg(cfg_path)
     if err:
         st.sidebar.error(f"Config error: {err}")
+
+    if cfg is not None and da.is_polymarket(cfg):
+        # Backtest/Tuning are portfolio-bot engines; polymarket gets its own tab.
+        overview, live, polymarket, config = st.tabs(
+            ["📊 Overview", "🤖 Live bot", "🎲 Polymarket", "⚙️ Config"]
+        )
+        with overview:
+            tab_overview(cfg, demo)
+        with live:
+            tab_live(cfg, demo)
+        with polymarket:
+            tab_polymarket(cfg, demo)
+        with config:
+            tab_config(cfg, cfg_path)
+        return
 
     overview, live, backtest, tuning, config = st.tabs(
         ["📊 Overview", "🤖 Live bot", "🧪 Backtest", "🎛️ Tuning", "⚙️ Config"]

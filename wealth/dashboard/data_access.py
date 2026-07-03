@@ -88,18 +88,42 @@ def _journal_view(records: List[dict]) -> JournalView:
     return JournalView(equity, ticks, orders, last_prices, target_weights)
 
 
-def load_positions(cfg: BotConfig, last_prices: Optional[Dict[str, float]] = None) -> pd.DataFrame:
-    """Read broker state JSON and mark positions to last known prices."""
+def is_polymarket(cfg) -> bool:
+    from wealth.polymarket.config import PolymarketConfig
+
+    return isinstance(cfg, PolymarketConfig)
+
+
+_POSITION_COLS = ["symbol", "quantity", "avg_price", "price", "value", "unrealized"]
+
+
+def load_positions(cfg, last_prices: Optional[Dict[str, float]] = None) -> pd.DataFrame:
+    """Read broker/executor state JSON and mark positions to last known prices.
+
+    Handles both state shapes: the portfolio broker keys positions by symbol
+    with `quantity`; the polymarket executor keys them by token_id with `size`
+    and `market_slug`, plus a meta.markets index that maps token ids back to
+    the "<slug>:UP/DOWN" labels the journal prices use.
+    """
     path = cfg.state_path
     if not os.path.exists(path):
-        return pd.DataFrame(columns=["symbol", "quantity", "avg_price", "price", "value", "unrealized"])
+        return pd.DataFrame(columns=_POSITION_COLS)
     with open(path) as f:
         state = json.load(f)
     last_prices = last_prices or {}
+
+    token_labels: Dict[str, str] = {}
+    for slug, info in state.get("meta", {}).get("markets", {}).items():
+        token_labels[str(info.get("token_up", ""))] = f"{slug}:UP"
+        token_labels[str(info.get("token_down", ""))] = f"{slug}:DOWN"
+
     rows = []
-    for sym, p in state.get("positions", {}).items():
-        qty = float(p.get("quantity", 0.0))
+    for key, p in state.get("positions", {}).items():
+        qty = float(p.get("quantity", p.get("size", 0.0)))
         avg = float(p.get("avg_price", 0.0))
+        sym = token_labels.get(key) or (
+            f"{p['market_slug']}:{key[:6]}…" if p.get("market_slug") else key
+        )
         price = float(last_prices.get(sym, avg) or avg)
         rows.append(
             {
@@ -114,7 +138,71 @@ def load_positions(cfg: BotConfig, last_prices: Optional[Dict[str, float]] = Non
     return pd.DataFrame(rows)
 
 
-def account_cash(cfg: BotConfig) -> float:
+@dataclass
+class PolymarketView:
+    spot: Optional[float]            # latest BTC spot seen by the bot
+    sigma: Optional[float]           # latest vol estimate (per sqrt-second)
+    fair: Dict[str, float]           # market slug -> fair P(up), latest tick
+    resolutions: pd.DataFrame        # slug, outcome, pnl, timestamp
+    realized_pnl: float
+    wins: int
+    losses: int
+    risk_blocks: Dict[str, int]      # reason -> count
+
+    @property
+    def win_rate(self) -> Optional[float]:
+        total = self.wins + self.losses
+        return self.wins / total if total else None
+
+
+def polymarket_view(records: List[dict]) -> PolymarketView:
+    """Aggregate the polymarket-specific journal events the generic view ignores."""
+    spot = sigma = None
+    fair: Dict[str, float] = {}
+    res_rows = []
+    risk_blocks: Dict[str, int] = {}
+    for r in records:
+        event = r.get("event")
+        if event == "tick":
+            if r.get("spot") is not None:
+                spot = float(r["spot"])
+            if r.get("sigma") is not None:
+                sigma = float(r["sigma"])
+            if r.get("fair"):
+                fair = {k: float(v) for k, v in r["fair"].items()}
+        elif event == "resolution":
+            res_rows.append(
+                {
+                    "timestamp": r.get("timestamp"),
+                    "slug": r.get("slug"),
+                    "outcome": r.get("outcome"),
+                    "pnl": float(r.get("pnl", 0.0)),
+                }
+            )
+        elif event == "risk_block":
+            reason = str(r.get("reason", "unknown"))
+            risk_blocks[reason] = risk_blocks.get(reason, 0) + 1
+
+    resolutions = pd.DataFrame(res_rows, columns=["timestamp", "slug", "outcome", "pnl"])
+    pnls = resolutions["pnl"] if not resolutions.empty else pd.Series(dtype=float)
+    return PolymarketView(
+        spot=spot,
+        sigma=sigma,
+        fair=fair,
+        resolutions=resolutions,
+        realized_pnl=float(pnls.sum()),
+        # pnl == 0 almost always means "expired with no position" — not a loss.
+        wins=int((pnls > 0).sum()),
+        losses=int((pnls < 0).sum()),
+        risk_blocks=risk_blocks,
+    )
+
+
+def load_polymarket_view(cfg) -> PolymarketView:
+    return polymarket_view(Journal(cfg.journal_path).records())
+
+
+def account_cash(cfg) -> float:
     path = cfg.state_path
     if not os.path.exists(path):
         return cfg.cash

@@ -96,6 +96,16 @@ def test_polymarket_shipped_config_loads():
     assert set(cfg.series) == {"hourly", "15m"}
 
 
+def test_parser_dashboard_address():
+    parser = build_parser()
+    args = parser.parse_args(["dashboard", "--config", "configs/polymarket.yaml",
+                              "--address", "0.0.0.0", "--port", "8501"])
+    assert args.address == "0.0.0.0"
+    # default stays localhost-only
+    args2 = parser.parse_args(["dashboard"])
+    assert args2.address == "localhost"
+
+
 def test_parser_polymarket_run():
     parser = build_parser()
     args = parser.parse_args(

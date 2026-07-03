@@ -165,3 +165,145 @@ def test_parse_params():
     from wealth.dashboard.app import _parse_params
     assert _parse_params("entry_n=20, exit_n=10") == {"entry_n": 20, "exit_n": 10}
     assert _parse_params("x=1.5, name=foo") == {"x": 1.5, "name": "foo"}
+
+
+# --------------------------------------------------------------------------- #
+# polymarket support
+# --------------------------------------------------------------------------- #
+def _pm_cfg(tmp_path):
+    from wealth.polymarket.config import PolymarketConfig
+
+    return PolymarketConfig(state_dir=str(tmp_path))
+
+
+def _write_pm_state(cfg):
+    import os
+
+    os.makedirs(cfg.state_dir, exist_ok=True)
+    state = {
+        "cash": 900.0,
+        "realized_pnl": 0.0,
+        "positions": {
+            "TOKUP": {"market_slug": "btc-updown-15m-1", "size": 100.0, "avg_price": 0.52},
+        },
+        "meta": {"markets": {"btc-updown-15m-1": {
+            "token_up": "TOKUP", "token_down": "TOKDN",
+            "period_open": 100000.0, "end_ts": 900.0,
+        }}},
+    }
+    with open(cfg.state_path, "w") as f:
+        json.dump(state, f)
+
+
+def test_is_polymarket(tmp_path):
+    assert da.is_polymarket(_pm_cfg(tmp_path))
+    assert not da.is_polymarket(BotConfig())
+
+
+def test_load_positions_polymarket_shape(tmp_path):
+    cfg = _pm_cfg(tmp_path)
+    _write_pm_state(cfg)
+    pos = da.load_positions(cfg, last_prices={"btc-updown-15m-1:UP": 0.60})
+    assert len(pos) == 1
+    row = pos.iloc[0]
+    assert row["symbol"] == "btc-updown-15m-1:UP"
+    assert row["quantity"] == 100.0
+    assert row["avg_price"] == 0.52
+    assert row["price"] == 0.60
+    assert row["unrealized"] == pytest.approx(100 * (0.60 - 0.52))
+
+
+def test_polymarket_view_aggregates_events():
+    records = [
+        {"event": "tick", "timestamp": "2026-07-03T09:00:00+00:00", "status": "hold",
+         "spot": 100000.0, "sigma": 0.0005, "fair": {"m1": 0.55},
+         "cash": 1000.0, "equity": 1000.0, "prices": {}, "orders": []},
+        {"event": "resolution", "timestamp": "2026-07-03T09:15:00+00:00",
+         "slug": "m1", "outcome": "up", "pnl": 40.0},
+        {"event": "resolution", "timestamp": "2026-07-03T09:30:00+00:00",
+         "slug": "m2", "outcome": "down", "pnl": -15.0},
+        {"event": "resolution", "timestamp": "2026-07-03T09:45:00+00:00",
+         "slug": "m3", "outcome": "up", "pnl": 0.0},   # no position held: not a loss
+        {"event": "risk_block", "reason": "kill_switch"},
+        {"event": "risk_block", "reason": "kill_switch"},
+        {"event": "risk_block", "reason": "exposure_cap"},
+    ]
+    pv = da.polymarket_view(records)
+    assert pv.spot == 100000.0
+    assert pv.fair == {"m1": 0.55}
+    assert len(pv.resolutions) == 3
+    assert pv.realized_pnl == pytest.approx(25.0)
+    assert (pv.wins, pv.losses) == (1, 1)
+    assert pv.win_rate == pytest.approx(0.5)
+    assert pv.risk_blocks == {"kill_switch": 2, "exposure_cap": 1}
+
+
+def test_polymarket_view_empty():
+    pv = da.polymarket_view([])
+    assert pv.spot is None
+    assert pv.win_rate is None
+    assert pv.resolutions.empty
+
+
+def test_load_config_returns_both_types(tmp_path):
+    bot = tmp_path / "bot.yaml"
+    bot.write_text("market: crypto\nsymbols: [BTC/USDT]\n")
+    pm = tmp_path / "pm.yaml"
+    pm.write_text("mode: paper\nseries: ['15m']\nedge_threshold: 0.05\n")
+    assert isinstance(da.load_config(str(bot)), BotConfig)
+    assert da.is_polymarket(da.load_config(str(pm)))
+
+
+def _apptest_available():
+    try:
+        from streamlit.testing.v1 import AppTest  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _apptest_available(), reason="streamlit AppTest unavailable")
+def test_app_renders_with_polymarket_config(tmp_path, monkeypatch):
+    """Regression net for AttributeError crashes: every tab renders with a
+    PolymarketConfig + a real polymarket journal, no exceptions."""
+    from streamlit.testing.v1 import AppTest
+
+    cfg_yaml = tmp_path / "polymarket.yaml"
+    cfg_yaml.write_text(
+        f"mode: paper\nseries: ['15m']\nedge_threshold: 0.05\nstate_dir: {tmp_path}\n"
+    )
+    _write_pm_state(_pm_cfg(tmp_path))
+    _write_journal(str(tmp_path / "journal.jsonl"), [
+        {"event": "market_open", "timestamp": "2026-07-03T09:00:00+00:00",
+         "slug": "btc-updown-15m-1", "period_open": 100000.0},
+        {"event": "tick", "timestamp": "2026-07-03T09:00:03+00:00", "bar_ts": "1",
+         "status": "hold", "spot": 100000.0, "sigma": 0.0005,
+         "fair": {"btc-updown-15m-1": 0.5}, "prices": {"btc-updown-15m-1:UP": 0.5},
+         "orders": [], "cash": 1000.0, "equity": 1000.0},
+        {"event": "tick", "timestamp": "2026-07-03T09:00:06+00:00", "bar_ts": "2",
+         "status": "traded", "spot": 100100.0, "sigma": 0.0005,
+         "fair": {"btc-updown-15m-1": 0.58},
+         "prices": {"btc-updown-15m-1:UP": 0.52},
+         "orders": [{"symbol": "btc-updown-15m-1:UP", "side": "buy",
+                     "quantity": 100.0, "price": 0.52}],
+         "cash": 948.0, "equity": 998.0},
+        {"event": "resolution", "timestamp": "2026-07-03T09:15:00+00:00",
+         "slug": "btc-updown-15m-1", "outcome": "up", "pnl": 48.0},
+    ])
+    monkeypatch.setenv("WEALTH_DASHBOARD_CONFIG", str(cfg_yaml))
+
+    at = AppTest.from_file("wealth/dashboard/app.py", default_timeout=30)
+    at.run()
+    assert not at.exception, f"dashboard raised: {at.exception}"
+
+
+@pytest.mark.skipif(not _apptest_available(), reason="streamlit AppTest unavailable")
+def test_app_still_renders_with_bot_config(tmp_path, monkeypatch):
+    cfg_yaml = tmp_path / "bot.yaml"
+    cfg_yaml.write_text(f"market: crypto\nsymbols: [BTC/USDT]\nstate_dir: {tmp_path}\n")
+    monkeypatch.setenv("WEALTH_DASHBOARD_CONFIG", str(cfg_yaml))
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("wealth/dashboard/app.py", default_timeout=30)
+    at.run()
+    assert not at.exception, f"dashboard raised: {at.exception}"

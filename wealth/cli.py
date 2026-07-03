@@ -195,6 +195,21 @@ def _print_safety_banner(cfg: BotConfig) -> None:
         print("[LIVE] !!! real money mode — orders will use real funds !!!")
 
 
+def _lan_ip() -> Optional[str]:
+    """Best-effort LAN IP (no traffic is actually sent on the UDP socket)."""
+    import socket
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return None
+
+
 def cmd_dashboard(args) -> int:
     """Launch the Streamlit dashboard (wealth[dashboard] extra required)."""
     import subprocess
@@ -212,10 +227,18 @@ def cmd_dashboard(args) -> int:
     cmd = [
         sys.executable, "-m", "streamlit", "run", app_path,
         "--server.port", str(args.port),
+        "--server.address", args.address,
     ]
     if args.headless:
         cmd += ["--server.headless", "true"]
-    print(f"launching dashboard on http://localhost:{args.port} …")
+    print(f"dashboard (this PC):        http://localhost:{args.port}")
+    if args.address not in ("localhost", "127.0.0.1"):
+        ip = _lan_ip()
+        if ip:
+            print(f"dashboard (phone, same Wi-Fi): http://{ip}:{args.port}")
+        else:
+            print("dashboard (phone): http://<this-PC's-LAN-IP>:"
+                  f"{args.port}  (find it with ipconfig / ip addr)")
     return subprocess.call(cmd, env=env)
 
 
@@ -258,6 +281,8 @@ def build_parser() -> argparse.ArgumentParser:
     dash = sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     dash.add_argument("--config", default="configs/bot.yaml")
     dash.add_argument("--port", type=int, default=8501)
+    dash.add_argument("--address", default="localhost",
+                      help="bind address; use 0.0.0.0 to view from your phone on the same Wi-Fi")
     dash.add_argument("--headless", action="store_true", help="no auto-open browser")
     dash.set_defaults(func=cmd_dashboard)
 

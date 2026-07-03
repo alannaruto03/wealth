@@ -91,6 +91,65 @@ Five tabs:
 | `grid`           | crypto grid trading *(stub)*                                |
 | `funding_arb`    | cash-and-carry funding arbitrage *(stub)*                  |
 
+## Run it on Windows — dashboard on your PC and phone
+
+Everything runs on your PC (the bot needs open internet access to Polymarket
+and Binance). One-time setup, then two terminals.
+
+**1. Install (once).** Install Python 3.11+ from [python.org](https://www.python.org/downloads/)
+— tick **"Add python.exe to PATH"** in the installer. Then in PowerShell:
+
+```powershell
+git clone https://github.com/alannaruto03/wealth.git
+cd wealth
+git checkout claude/polymarket-quant-bot-58mk6c   # until merged to main
+pip install -e ".[dashboard]"
+```
+
+**2. Sanity check** — can the bot see the markets from your network?
+
+```powershell
+wealth polymarket discover --config configs/polymarket.yaml
+```
+
+You should see the current hourly + 15m BTC markets with books and fair
+values. If discovery finds nothing, the market slug format may have changed —
+this command is the debugging tool for that.
+
+**3. Terminal 1 — run the bot** (paper money, real order books):
+
+```powershell
+wealth polymarket run --config configs/polymarket.yaml
+```
+
+**4. Terminal 2 — run the dashboard, reachable from your phone:**
+
+```powershell
+wealth dashboard --config configs/polymarket.yaml --address 0.0.0.0
+```
+
+It prints two URLs: `http://localhost:8501` for the PC and
+`http://<your-LAN-IP>:8501` for the phone. When Windows Firewall pops up,
+click **Allow** (private networks). On your phone — **same Wi-Fi as the PC** —
+open the phone URL in the browser. If you missed the firewall prompt:
+
+```powershell
+netsh advfirewall firewall add rule name="wealth dashboard" dir=in action=allow protocol=TCP localport=8501
+```
+
+Notes:
+- Both terminals must stay open; closing them stops the bot / dashboard.
+- If the PC sleeps, the bot pauses. Keep it awake while trading:
+  `powercfg /change standby-timeout-ac 0`
+- All state lives in `state\polymarket\` (journal + positions). Delete that
+  folder to start a fresh paper run.
+- The dashboard's Polymarket tab shows equity, win rate, resolved markets, and
+  risk blocks; hit **Refresh** in the sidebar to pull the latest journal.
+- Phone access is LAN-only by design (nothing is exposed to the internet). If
+  you later want access from anywhere, run [Tailscale](https://tailscale.com)
+  on PC + phone and use the PC's Tailscale IP instead — don't put the
+  dashboard on a public tunnel; it can edit the bot's config.
+
 ## Polymarket BTC Up/Down bot
 
 A second bot lives in `wealth/polymarket/`: it trades Polymarket's short-term
