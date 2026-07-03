@@ -93,6 +93,26 @@ wealth poly run --config configs/polymarket.yaml --windows 4   # paper, 4 window
 wealth poly report --config configs/polymarket.yaml            # PnL per window
 ```
 
+There is also a **value bot** for Polymarket's long-dated event markets — the
+better fit for a small account, because its edge doesn't decay with latency.
+It harvests the documented favorite-longshot bias: retail overpays longshots
+and underpays 90–97¢ near-certainties. The bot scans the Gamma API for liquid
+binary markets resolving within ~30 days, buys favorites whose estimated edge
+survives a calibration haircut and fees, sizes with capped fractional Kelly,
+and holds to resolution.
+
+```bash
+wealth poly scan                      # read-only: show current candidates
+wealth poly value --once              # one scan/settle cycle (cron-friendly)
+wealth poly value                     # loop every scan_interval_s
+```
+
+Config: `configs/value.yaml`. The risk numbers ARE the strategy — a 95¢
+favorite that loses wipes ~20 winners, so per-market stakes, total exposure,
+and position count are hard-capped. Both bots appear in the dashboard's
+**🎯 Polymarket** tab (`wealth dashboard`), with a demo-data mode that works
+offline.
+
 What it does (the strategy archetype the consistently profitable accounts on
 these markets use, distilled):
 

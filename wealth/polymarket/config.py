@@ -70,13 +70,71 @@ class PolyBotConfig:
 
     @classmethod
     def from_yaml(cls, path: str) -> "PolyBotConfig":
-        with open(path) as f:
-            raw = yaml.safe_load(f) or {}
-        known = {f.name for f in cls.__dataclass_fields__.values()}
-        unknown = set(raw) - known
-        if unknown:
-            raise ValueError(f"unknown config keys: {sorted(unknown)}")
-        return cls(**raw)
+        return _from_yaml(cls, path)
 
     def to_dict(self) -> Dict:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
+
+
+@dataclass
+class ValueBotConfig:
+    """Longshot-bias fader over long-dated event markets (hold to resolution)."""
+    mode: str = "paper"             # paper | live (live not implemented)
+    cash: float = 1_000.0
+
+    # scan filters
+    fav_min: float = 0.90           # favorite price band to buy into
+    fav_max: float = 0.97
+    min_volume: float = 5_000.0     # $ lifetime volume
+    min_liquidity: float = 500.0    # $ book liquidity
+    max_days: float = 30.0          # only markets resolving within this window
+    max_spread: float = 0.02
+    exclude_slug_patterns: list = None  # default set in __post_init__
+
+    # edge model (conservative favorite-longshot calibration)
+    bias_bump_low: float = 0.020    # bump at fav_min
+    bias_bump_high: float = 0.010   # bump at fav_max
+    haircut: float = 0.005          # humility discount on p_true
+    event_fee_rate: float = 0.035   # event-tier taker fee rate
+    min_edge: float = 0.004
+
+    # sizing (capped fractional Kelly)
+    kelly_fraction: float = 0.25
+    max_stake_per_market: float = 25.0
+    max_total_exposure: float = 300.0
+    max_positions: int = 25
+    min_stake: float = 2.0
+
+    # infrastructure
+    scan_interval_s: float = 1_800.0
+    max_scan_pages: int = 4         # x500 markets/page
+    state_dir: str = "state/polymarket"
+
+    def __post_init__(self):
+        if self.exclude_slug_patterns is None:
+            self.exclude_slug_patterns = ["-updown-"]
+
+    @property
+    def journal_path(self) -> str:
+        return f"{self.state_dir}/value_journal.jsonl"
+
+    @property
+    def positions_path(self) -> str:
+        return f"{self.state_dir}/value_positions.json"
+
+    @classmethod
+    def from_yaml(cls, path: str) -> "ValueBotConfig":
+        return _from_yaml(cls, path)
+
+    def to_dict(self) -> Dict:
+        return {k: getattr(self, k) for k in self.__dataclass_fields__}
+
+
+def _from_yaml(cls, path: str):
+    with open(path) as f:
+        raw = yaml.safe_load(f) or {}
+    known = {f.name for f in cls.__dataclass_fields__.values()}
+    unknown = set(raw) - known
+    if unknown:
+        raise ValueError(f"unknown config keys: {sorted(unknown)}")
+    return cls(**raw)

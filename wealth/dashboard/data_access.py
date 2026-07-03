@@ -286,6 +286,171 @@ def demo_journal_view(seed: int = 7) -> JournalView:
     )
 
 
+# --------------------------------------------------------------------------- #
+# Polymarket bots (15-minute maker + value bot)
+# --------------------------------------------------------------------------- #
+@dataclass
+class PolyView:
+    equity: pd.Series
+    windows: pd.DataFrame     # one row per settled window (slug, outcome, pnl, fills)
+    fills: pd.DataFrame       # one row per fill (token, side, price, size, fee, kind)
+    fill_counts: Dict[str, int]
+    fees_paid: float
+
+
+def load_poly_view(journal_path: str) -> PolyView:
+    records = Journal(journal_path).records() if os.path.exists(journal_path) else []
+    return _poly_view(records)
+
+
+def _poly_view(records: List[dict]) -> PolyView:
+    win_rows, fill_rows, eq_rows = [], [], []
+    counts: Dict[str, int] = {"maker": 0, "taker": 0, "pair": 0}
+    fees = 0.0
+    for r in records:
+        ev = r.get("event")
+        if ev == "window_settle":
+            f = r.get("fills") or {}
+            win_rows.append({
+                "timestamp": r.get("timestamp"), "slug": r.get("slug"),
+                "outcome": r.get("outcome"), "pnl": float(r.get("pnl", 0.0)),
+                "payout": r.get("payout"), "cash": r.get("cash"),
+                "maker": int(f.get("maker", 0)), "taker": int(f.get("taker", 0)),
+                "pair": int(f.get("pair", 0)),
+            })
+            for k in counts:
+                counts[k] += int(f.get(k, 0))
+        elif ev == "fill":
+            fill_rows.append({
+                "timestamp": r.get("timestamp"), "slug": r.get("slug"),
+                "token": r.get("token"), "side": r.get("side"),
+                "price": r.get("price"), "size": r.get("size"),
+                "fee": float(r.get("fee", 0.0)), "kind": r.get("kind"),
+            })
+            fees += float(r.get("fee", 0.0))
+        elif ev == "tick" and r.get("equity") is not None:
+            eq_rows.append((r.get("timestamp"), float(r["equity"])))
+
+    equity = pd.Series(dtype=float, name="equity")
+    if eq_rows:
+        equity = pd.Series(
+            [v for _, v in eq_rows],
+            index=pd.to_datetime([t for t, _ in eq_rows]), name="equity")
+    return PolyView(equity, pd.DataFrame(win_rows), pd.DataFrame(fill_rows),
+                    counts, fees)
+
+
+@dataclass
+class ValueView:
+    equity: pd.Series
+    open_positions: pd.DataFrame   # slug, outcome_label, entry_price, stake, edge
+    settled: pd.DataFrame          # slug, won, stake, payout, pnl
+    cash: Optional[float]
+    exposure: float
+    hit_rate: Optional[float]
+    total_pnl: float
+
+
+def load_value_view(journal_path: str, positions_path: str) -> ValueView:
+    records = Journal(journal_path).records() if os.path.exists(journal_path) else []
+    positions, cash = [], None
+    if os.path.exists(positions_path):
+        with open(positions_path) as f:
+            raw = json.load(f)
+        positions = raw.get("positions", [])
+        cash = raw.get("cash")
+    return _value_view(records, positions, cash)
+
+
+def _value_view(records: List[dict], positions: List[dict],
+                cash: Optional[float]) -> ValueView:
+    settle_rows, eq_rows = [], []
+    for r in records:
+        ev = r.get("event")
+        if ev == "value_settle":
+            settle_rows.append({
+                "timestamp": r.get("timestamp"), "slug": r.get("slug"),
+                "question": r.get("question"),
+                "outcome_label": r.get("outcome_label"),
+                "won": bool(r.get("won")), "entry_price": r.get("entry_price"),
+                "stake": float(r.get("stake", 0.0)),
+                "payout": float(r.get("payout", 0.0)),
+                "pnl": float(r.get("pnl", 0.0)),
+            })
+        elif ev == "tick" and r.get("equity") is not None:
+            eq_rows.append((r.get("timestamp"), float(r["equity"])))
+
+    equity = pd.Series(dtype=float, name="equity")
+    if eq_rows:
+        equity = pd.Series(
+            [v for _, v in eq_rows],
+            index=pd.to_datetime([t for t, _ in eq_rows]), name="equity")
+
+    open_df = pd.DataFrame(positions)
+    if not open_df.empty:
+        keep = ["slug", "question", "outcome_label", "entry_price", "shares",
+                "stake", "edge", "end_date"]
+        open_df = open_df[[c for c in keep if c in open_df.columns]]
+
+    settled = pd.DataFrame(settle_rows)
+    hit_rate = None
+    total_pnl = 0.0
+    if not settled.empty:
+        hit_rate = float(settled["won"].mean())
+        total_pnl = float(settled["pnl"].sum())
+    exposure = float(open_df["stake"].sum()) if "stake" in open_df else 0.0
+    return ValueView(equity, open_df, settled, cash, exposure, hit_rate, total_pnl)
+
+
+def demo_poly_view(seed: int = 11, n: int = 48) -> PolyView:
+    """Synthetic 15-min bot journal: mostly small wins, occasional losses."""
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2026-06-01", periods=n, freq="15min")
+    pnl = np.where(rng.random(n) < 0.72,
+                   rng.uniform(0.1, 1.4, n), -rng.uniform(0.5, 3.0, n))
+    records = []
+    equity = 1_000.0
+    for ts, p in zip(idx, pnl):
+        equity += p
+        slug = f"btc-updown-15m-{int(ts.timestamp())}"
+        records.append({"event": "window_settle", "timestamp": str(ts),
+                        "slug": slug, "outcome": rng.choice(["UP", "DOWN"]),
+                        "pnl": float(p), "payout": 0.0, "cash": equity,
+                        "fills": {"maker": int(rng.integers(0, 6)),
+                                  "taker": int(rng.integers(0, 2)),
+                                  "pair": int(rng.integers(0, 3))}})
+        records.append({"event": "tick", "timestamp": str(ts),
+                        "bar_ts": int(ts.timestamp()), "equity": equity})
+    return _poly_view(records)
+
+
+def demo_value_view(seed: int = 13, n_settled: int = 24, n_open: int = 8) -> ValueView:
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2026-05-01", periods=n_settled, freq="D")
+    records, cash = [], 1_000.0
+    for i, ts in enumerate(idx):
+        entry = float(rng.uniform(0.90, 0.97))
+        stake = float(rng.uniform(5, 25))
+        won = bool(rng.random() < 0.94)
+        payout = stake / entry if won else 0.0
+        pnl = payout - stake
+        cash += pnl
+        records.append({"event": "value_settle", "timestamp": str(ts),
+                        "slug": f"demo-market-{i}", "question": f"Demo event {i}?",
+                        "outcome_label": "Yes", "won": won, "entry_price": entry,
+                        "stake": stake, "payout": payout, "pnl": pnl})
+        records.append({"event": "tick", "timestamp": str(ts), "equity": cash})
+    positions = [{
+        "slug": f"demo-open-{i}", "question": f"Open demo event {i}?",
+        "outcome_label": rng.choice(["Yes", "No"]),
+        "entry_price": float(rng.uniform(0.90, 0.97)),
+        "shares": 20.0, "stake": float(rng.uniform(5, 25)),
+        "edge": float(rng.uniform(0.005, 0.02)),
+        "end_date": str(pd.Timestamp("2026-07-10") + pd.Timedelta(days=int(i))),
+    } for i in range(n_open)]
+    return _value_view(records, positions, cash)
+
+
 def demo_positions(cash: float = 10_000.0) -> pd.DataFrame:
     bv = demo_backtest()
     price = float(bv.prices.iloc[-1, 0])

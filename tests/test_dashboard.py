@@ -165,3 +165,85 @@ def test_parse_params():
     from wealth.dashboard.app import _parse_params
     assert _parse_params("entry_n=20, exit_n=10") == {"entry_n": 20, "exit_n": 10}
     assert _parse_params("x=1.5, name=foo") == {"x": 1.5, "name": "foo"}
+
+
+# --------------------------------------------------------------------------- #
+# Polymarket views + charts
+# --------------------------------------------------------------------------- #
+def test_poly_view_parses_windows_fills_equity():
+    rows = [
+        {"event": "window_start", "timestamp": "2026-07-01T00:00:00",
+         "slug": "btc-updown-15m-1", "cash": 1000},
+        {"event": "fill", "timestamp": "2026-07-01T00:05:00",
+         "slug": "btc-updown-15m-1", "token": "UP", "side": "buy",
+         "price": 0.48, "size": 20, "fee": 0.0, "kind": "maker"},
+        {"event": "window_settle", "timestamp": "2026-07-01T00:15:00",
+         "slug": "btc-updown-15m-1", "outcome": "UP", "pnl": 2.5,
+         "payout": 20.0, "cash": 1002.5,
+         "fills": {"maker": 1, "taker": 0, "pair": 2}},
+        {"event": "tick", "timestamp": "2026-07-01T00:15:00", "equity": 1002.5},
+    ]
+    pv = da._poly_view(rows)
+    assert len(pv.windows) == 1 and pv.windows["pnl"].iloc[0] == 2.5
+    assert len(pv.fills) == 1
+    assert pv.fill_counts == {"maker": 1, "taker": 0, "pair": 2}
+    assert list(pv.equity.values) == [1002.5]
+
+
+def test_load_poly_view_missing_file_is_empty(tmp_path):
+    pv = da.load_poly_view(str(tmp_path / "nope.jsonl"))
+    assert pv.windows.empty and pv.fills.empty and pv.equity.empty
+
+
+def test_value_view_aggregates(tmp_path):
+    rows = [
+        {"event": "value_open", "timestamp": "2026-06-01T00:00:00",
+         "slug": "m1", "price": 0.95, "stake": 20.0},
+        {"event": "value_settle", "timestamp": "2026-06-05T00:00:00",
+         "slug": "m1", "question": "Q1?", "outcome_label": "Yes", "won": True,
+         "entry_price": 0.95, "stake": 20.0, "payout": 21.05, "pnl": 1.05},
+        {"event": "value_settle", "timestamp": "2026-06-06T00:00:00",
+         "slug": "m2", "question": "Q2?", "outcome_label": "No", "won": False,
+         "entry_price": 0.93, "stake": 10.0, "payout": 0.0, "pnl": -10.0},
+        {"event": "tick", "timestamp": "2026-06-06T00:00:00", "equity": 991.05},
+    ]
+    positions = [{"slug": "m3", "question": "Q3?", "outcome_label": "Yes",
+                  "entry_price": 0.94, "shares": 21.3, "stake": 20.0,
+                  "edge": 0.01, "end_date": "2026-07-10"}]
+    vv = da._value_view(rows, positions, cash=971.05)
+    assert vv.hit_rate == 0.5
+    assert abs(vv.total_pnl - (-8.95)) < 1e-9
+    assert vv.exposure == 20.0
+    assert len(vv.open_positions) == 1
+    assert list(vv.equity.values) == [991.05]
+
+
+def test_load_value_view_from_files(tmp_path):
+    journal = tmp_path / "value_journal.jsonl"
+    _write_journal(str(journal), [
+        {"event": "tick", "timestamp": "2026-06-01T00:00:00", "equity": 1000.0}])
+    positions = tmp_path / "value_positions.json"
+    positions.write_text(json.dumps(
+        {"cash": 980.0, "positions": [{"slug": "m", "stake": 20.0}]}))
+    vv = da.load_value_view(str(journal), str(positions))
+    assert vv.cash == 980.0 and vv.exposure == 20.0
+
+
+def test_demo_poly_and_value_views():
+    pv = da.demo_poly_view()
+    assert not pv.windows.empty and pv.equity.size
+    vv = da.demo_value_view()
+    assert not vv.settled.empty and not vv.open_positions.empty
+    assert vv.hit_rate is not None
+
+
+def test_poly_charts_return_figures():
+    pv = da.demo_poly_view()
+    assert isinstance(charts.window_pnl_bars(pv.windows), go.Figure)
+    assert isinstance(charts.hit_rate_gauge(0.95), go.Figure)
+
+
+def test_poly_charts_handle_empty():
+    assert isinstance(charts.window_pnl_bars(pd.DataFrame()), go.Figure)
+    assert isinstance(charts.window_pnl_bars(None), go.Figure)
+    assert isinstance(charts.hit_rate_gauge(None), go.Figure)

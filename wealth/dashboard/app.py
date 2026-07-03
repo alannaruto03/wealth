@@ -244,6 +244,99 @@ def tab_tuning(cfg, demo: bool):
             st.error(f"Tuning failed: {exc}")
 
 
+def tab_polymarket(demo: bool):
+    ui.section(st, "Polymarket bots")
+    st.caption(
+        "Two paper-first bots: the 15-minute maker (hybrid quoting + complete-set "
+        "capture on the BTC Up-or-Down windows) and the value bot (longshot-bias "
+        "fader holding 90–97¢ favorites to resolution)."
+    )
+    if demo:
+        pv = da.demo_poly_view()
+        vv = da.demo_value_view()
+        st.caption("Showing demo data — toggle off in the sidebar to read your real journals.")
+    else:
+        from wealth.polymarket.config import PolyBotConfig, ValueBotConfig
+        pcfg_path = os.environ.get("WEALTH_POLY_CONFIG", "configs/polymarket.yaml")
+        vcfg_path = os.environ.get("WEALTH_VALUE_CONFIG", "configs/value.yaml")
+        pcfg = PolyBotConfig.from_yaml(pcfg_path) if os.path.exists(pcfg_path) \
+            else PolyBotConfig()
+        vcfg = ValueBotConfig.from_yaml(vcfg_path) if os.path.exists(vcfg_path) \
+            else ValueBotConfig()
+        pv = da.load_poly_view(pcfg.journal_path)
+        vv = da.load_value_view(vcfg.journal_path, vcfg.positions_path)
+
+    # ---- 15-minute maker bot ------------------------------------------------
+    ui.section(st, "15-minute maker bot")
+    if pv.windows.empty and pv.equity.empty:
+        st.info("No 15-minute bot data yet — run `wealth poly run` first.")
+    else:
+        total_pnl = float(pv.windows["pnl"].sum()) if not pv.windows.empty else 0.0
+        n_win = int((pv.windows["pnl"] > 0).sum()) if not pv.windows.empty else 0
+        n = len(pv.windows)
+        final = float(pv.equity.iloc[-1]) if pv.equity.size else None
+        ui.kpi_row(st, [
+            ui.kpi("Equity", ui._fmt_money(final)),
+            ui.kpi("Total PnL", ui._fmt_money(total_pnl), tone=total_pnl),
+            ui.kpi("Windows settled", str(n)),
+            ui.kpi("Window win rate", f"{100.0 * n_win / n:.0f}%" if n else "—"),
+            ui.kpi("Fills m/t/p", f"{pv.fill_counts.get('maker', 0)}/"
+                                  f"{pv.fill_counts.get('taker', 0)}/"
+                                  f"{pv.fill_counts.get('pair', 0)}"),
+            ui.kpi("Taker fees", ui._fmt_money(pv.fees_paid)),
+        ])
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            st.plotly_chart(charts.equity_area(pv.equity, height=300),
+                            use_container_width=True, key="poly_equity")
+        with c2:
+            st.plotly_chart(charts.window_pnl_bars(pv.windows, height=300),
+                            use_container_width=True, key="poly_pnl")
+        if not pv.fills.empty:
+            ui.section(st, "Recent fills")
+            st.dataframe(pv.fills.tail(20), use_container_width=True,
+                         hide_index=True, key="poly_fills")
+
+    # ---- value bot -----------------------------------------------------------
+    ui.section(st, "Value bot (longshot-bias fader)")
+    if vv.settled.empty and vv.open_positions.empty and vv.equity.empty:
+        st.info("No value-bot data yet — run `wealth poly value --once` first.")
+        return
+    breakeven = (float(vv.settled["entry_price"].mean())
+                 if not vv.settled.empty and "entry_price" in vv.settled
+                 else 0.93)
+    ui.kpi_row(st, [
+        ui.kpi("Equity", ui._fmt_money(
+            float(vv.equity.iloc[-1]) if vv.equity.size else None)),
+        ui.kpi("Cash", ui._fmt_money(vv.cash)),
+        ui.kpi("Open exposure", ui._fmt_money(vv.exposure)),
+        ui.kpi("Open positions", str(len(vv.open_positions))),
+        ui.kpi("Hit rate",
+               f"{100.0 * vv.hit_rate:.1f}%" if vv.hit_rate is not None else "—",
+               sub=f"break-even ≈ {100.0 * breakeven:.0f}%"),
+        ui.kpi("Settled PnL", ui._fmt_money(vv.total_pnl), tone=vv.total_pnl),
+    ])
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.plotly_chart(charts.equity_area(vv.equity, height=300),
+                        use_container_width=True, key="value_equity")
+    with c2:
+        st.plotly_chart(charts.hit_rate_gauge(vv.hit_rate, breakeven=breakeven),
+                        use_container_width=True, key="value_hit")
+    ui.section(st, "Open positions")
+    if not vv.open_positions.empty:
+        st.dataframe(vv.open_positions, use_container_width=True,
+                     hide_index=True, key="value_open")
+    else:
+        st.caption("Flat — no open value positions.")
+    ui.section(st, "Settled positions")
+    if not vv.settled.empty:
+        st.dataframe(vv.settled.tail(25), use_container_width=True,
+                     hide_index=True, key="value_settled")
+    else:
+        st.caption("Nothing settled yet.")
+
+
 def tab_config(cfg, cfg_path: str):
     ui.section(st, "Configuration")
     if cfg is None:
@@ -360,13 +453,16 @@ def main():
     if err:
         st.sidebar.error(f"Config error: {err}")
 
-    overview, live, backtest, tuning, config = st.tabs(
-        ["📊 Overview", "🤖 Live bot", "🧪 Backtest", "🎛️ Tuning", "⚙️ Config"]
+    overview, live, poly, backtest, tuning, config = st.tabs(
+        ["📊 Overview", "🤖 Live bot", "🎯 Polymarket", "🧪 Backtest", "🎛️ Tuning",
+         "⚙️ Config"]
     )
     with overview:
         tab_overview(cfg, demo)
     with live:
         tab_live(cfg, demo)
+    with poly:
+        tab_polymarket(demo)
     with backtest:
         tab_backtest(cfg, demo)
     with tuning:

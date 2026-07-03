@@ -123,6 +123,50 @@ def monthly_heatmap(pivot: pd.DataFrame, height: int = 320) -> go.Figure:
     return fig
 
 
+def window_pnl_bars(windows: pd.DataFrame, height: int = 300) -> go.Figure:
+    """Per-window PnL bars (green/red) with a cumulative PnL line overlay."""
+    if windows is None or windows.empty or "pnl" not in windows:
+        return _empty("No settled windows yet")
+    pnl = windows["pnl"].astype(float)
+    x = pd.to_datetime(windows["timestamp"]) if "timestamp" in windows \
+        else pd.RangeIndex(len(pnl))
+    colors = [theme.ACCENT if v >= 0 else theme.RED for v in pnl]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=x, y=pnl.values, name="Window PnL", marker_color=colors,
+        hovertemplate="%{x}<br>%{y:+.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=pnl.cumsum().values, name="Cumulative", mode="lines",
+        line=dict(color=theme.BLUE, width=1.8),
+        hovertemplate="%{x}<br>%{y:+.2f}<extra></extra>",
+    ))
+    fig.update_layout(height=height, title="PnL per window",
+                      legend=dict(orientation="h", y=1.02, x=0))
+    return fig
+
+
+def hit_rate_gauge(hit_rate: Optional[float], breakeven: float = 0.93,
+                   height: int = 260) -> go.Figure:
+    """Settled hit rate vs the break-even rate implied by the entry band."""
+    if hit_rate is None:
+        return _empty("No settled positions yet")
+    color = theme.ACCENT if hit_rate >= breakeven else theme.RED
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number+delta", value=hit_rate * 100.0,
+        delta=dict(reference=breakeven * 100.0, suffix="%"),
+        number=dict(suffix="%"),
+        gauge=dict(
+            axis=dict(range=[80, 100], ticksuffix="%"),
+            bar=dict(color=color),
+            threshold=dict(line=dict(color=theme.YELLOW, width=2),
+                           thickness=0.8, value=breakeven * 100.0),
+        ),
+    ))
+    fig.update_layout(height=height, title="Hit rate vs break-even")
+    return fig
+
+
 def oos_bar(report, height: int = 300) -> go.Figure:
     """Bar chart of in-sample vs out-of-sample score per walk-forward fold."""
     folds = getattr(report, "folds", []) or []

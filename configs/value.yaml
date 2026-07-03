@@ -1,0 +1,38 @@
+# Polymarket value bot (longshot-bias fader) — wealth poly value --config configs/value.yaml
+#
+# Buys underpriced 90-97c favorites on liquid event markets resolving soon and
+# holds them to resolution. Slow, statistical edge — no latency component.
+# DEFAULT IS SAFE: paper money. The risk numbers below ARE the strategy: a
+# 95c favorite that loses wipes ~20 winners, so sizing is everything.
+
+mode: paper
+cash: 1000
+
+# --- scan filters ---------------------------------------------------------------
+fav_min: 0.90                 # favorite price band to buy into
+fav_max: 0.97
+min_volume: 5000              # $ lifetime market volume
+min_liquidity: 500            # $ order-book liquidity
+max_days: 30                  # only markets resolving within N days
+max_spread: 0.02
+exclude_slug_patterns:        # never touch the HFT arena
+  - "-updown-"
+
+# --- edge model (conservative favorite-longshot calibration) ----------------------
+bias_bump_low: 0.020          # assumed underpricing at fav_min
+bias_bump_high: 0.010         # ...decaying to this at fav_max
+haircut: 0.005                # humility discount on the estimate
+event_fee_rate: 0.035         # event-tier taker fee (near zero at 95c)
+min_edge: 0.004               # skip anything thinner than this after fees
+
+# --- sizing (capped fractional Kelly) ---------------------------------------------
+kelly_fraction: 0.25
+max_stake_per_market: 25
+max_total_exposure: 300
+max_positions: 25
+min_stake: 2
+
+# --- infrastructure ----------------------------------------------------------------
+scan_interval_s: 1800         # scan every 30 minutes
+max_scan_pages: 4             # x500 markets per page
+state_dir: state/polymarket

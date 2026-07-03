@@ -228,12 +228,69 @@ def cmd_poly_run(args) -> int:
 
 
 def cmd_poly_report(args) -> int:
+    import os
+
     from wealth.live.journal import Journal
-    from wealth.polymarket.config import PolyBotConfig
-    from wealth.polymarket.report import build_poly_report
+    from wealth.polymarket.config import PolyBotConfig, ValueBotConfig
+    from wealth.polymarket.report import build_poly_report, build_value_report
 
     cfg = PolyBotConfig.from_yaml(args.config)
     print(build_poly_report(Journal(cfg.journal_path)))
+    vcfg = (ValueBotConfig.from_yaml(args.value_config)
+            if os.path.exists(args.value_config) else ValueBotConfig())
+    if os.path.exists(vcfg.journal_path) or os.path.exists(vcfg.positions_path):
+        print()
+        print(build_value_report(Journal(vcfg.journal_path), vcfg.positions_path))
+    return 0
+
+
+def cmd_poly_scan(args) -> int:
+    from wealth.polymarket.config import ValueBotConfig
+    from wealth.polymarket.report import candidates_table
+    from wealth.polymarket.scanner import GammaScanner
+
+    cfg = ValueBotConfig.from_yaml(args.config)
+    scanner = GammaScanner(cfg)
+    try:
+        candidates = scanner.scan()
+    except Exception as exc:  # noqa: BLE001 - network/proxy failures
+        print(f"scan failed: {exc}\n"
+              "The scanner needs outbound access to gamma-api.polymarket.com "
+              "(blocked in some sandboxes — run this on your machine).",
+              file=sys.stderr)
+        return 1
+    finally:
+        scanner.close()
+    print(candidates_table(candidates, top=args.top))
+    return 0
+
+
+def cmd_poly_value(args) -> int:
+    from wealth.live.journal import Journal
+    from wealth.polymarket.config import ValueBotConfig
+    from wealth.polymarket.value_bot import ValueBot
+
+    cfg = ValueBotConfig.from_yaml(args.config)
+    if cfg.mode != "paper":
+        raise SystemExit("[LIVE] refusing to start: the value bot is paper-only "
+                         "for now. Build a track record first.")
+    print("[PAPER] value bot — simulated money, live markets, hold to resolution.")
+    bot = ValueBot(cfg, Journal(cfg.journal_path))
+    if args.once:
+        try:
+            bot.run_once()
+        except Exception as exc:  # noqa: BLE001 - network/proxy failures
+            print(f"cycle failed: {exc}\n"
+                  "The bot needs outbound access to gamma-api.polymarket.com "
+                  "(blocked in some sandboxes — run this on your machine).",
+                  file=sys.stderr)
+            return 1
+    else:
+        print(f"scanning every {cfg.scan_interval_s:.0f}s — Ctrl-C to stop")
+        try:
+            bot.run_forever()
+        except KeyboardInterrupt:
+            print("\nstopped.")
     return 0
 
 
@@ -308,9 +365,24 @@ def build_parser() -> argparse.ArgumentParser:
                           help="stop after this many seconds (0 = no limit)")
     poly_run.set_defaults(func=cmd_poly_run)
 
-    poly_rep = poly_sub.add_parser("report", help="summarize the poly bot journal")
+    poly_rep = poly_sub.add_parser("report", help="summarize the poly bot journals")
     poly_rep.add_argument("--config", default="configs/polymarket.yaml")
+    poly_rep.add_argument("--value-config", default="configs/value.yaml",
+                          dest="value_config")
     poly_rep.set_defaults(func=cmd_poly_report)
+
+    poly_scan = poly_sub.add_parser(
+        "scan", help="scan event markets for longshot-bias candidates (read-only)")
+    poly_scan.add_argument("--config", default="configs/value.yaml")
+    poly_scan.add_argument("--top", type=int, default=20)
+    poly_scan.set_defaults(func=cmd_poly_scan)
+
+    poly_val = poly_sub.add_parser(
+        "value", help="run the value bot: buy underpriced favorites, hold to resolution")
+    poly_val.add_argument("--config", default="configs/value.yaml")
+    poly_val.add_argument("--once", action="store_true",
+                          help="one scan/settle cycle (cron-friendly)")
+    poly_val.set_defaults(func=cmd_poly_value)
 
     dash = sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     dash.add_argument("--config", default="configs/bot.yaml")
