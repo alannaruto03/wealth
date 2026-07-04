@@ -150,6 +150,53 @@ Notes:
   on PC + phone and use the PC's Tailscale IP instead — don't put the
   dashboard on a public tunnel; it can edit the bot's config.
 
+## View it from anywhere (Vercel)
+
+The bot itself must keep running on your PC — Vercel can't host long-running
+processes. What Vercel hosts (free) is `web/index.html`: a fast, mobile-first
+**read-only live view**. The bot pushes a JSON snapshot (equity, win rate,
+positions, resolutions) to a secret GitHub gist every minute; the page reads
+it. Works even when the PC dashboard is closed — only the bot must be running.
+
+**One-time setup:**
+
+1. **GitHub token** (lets the bot update its gist): github.com → Settings →
+   Developer settings → Fine-grained tokens → Generate; give it **only**
+   Account permissions → Gists → Read and write. Then in PowerShell:
+
+   ```powershell
+   setx WEALTH_PUBLISH_TOKEN "github_pat_XXXX"
+   ```
+   (open a new terminal afterwards so the variable is picked up)
+
+2. **Turn publishing on** in `configs/polymarket.yaml`:
+
+   ```yaml
+   publish: true
+   ```
+
+3. **Start the bot** — on the first publish it creates the gist and prints:
+   `live view feed created: gist <id> — open your static page with ?gist=<id>`.
+   (Or run `wealth polymarket publish --config configs/polymarket.yaml` for a
+   one-shot test.)
+
+4. **Deploy the page to Vercel** (~3 minutes): [vercel.com](https://vercel.com)
+   → sign in with GitHub → **Add New… → Project** → Import this repo → set
+   **Root Directory** to `web` → Deploy. No build settings needed.
+
+5. On your phone, open and bookmark:
+
+   ```
+   https://<your-project>.vercel.app/?gist=<gist-id>
+   ```
+   The page remembers the gist id, auto-refreshes every 60s, and shows a STALE
+   badge if the bot stops publishing.
+
+Privacy: the gist is unlisted but anyone with the link can *view* the stats
+(read-only — no keys, no controls). Delete the gist to rotate access; the bot
+creates a fresh one on the next run. GitHub Pages can host `web/` identically
+if you prefer it over Vercel.
+
 ## Polymarket BTC Up/Down bot
 
 A second bot lives in `wealth/polymarket/`: it trades Polymarket's short-term

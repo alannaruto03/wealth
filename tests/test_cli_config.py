@@ -120,7 +120,8 @@ def test_parser_polymarket_run():
 def test_parser_polymarket_subcommands_wired():
     parser = build_parser()
     for cmd, extra in [("discover", []), ("record", []),
-                       ("replay", ["--file", "x.jsonl"]), ("report", [])]:
+                       ("replay", ["--file", "x.jsonl"]), ("report", []),
+                       ("publish", [])]:
         args = parser.parse_args(
             ["polymarket", cmd, "--config", "configs/polymarket.yaml", *extra]
         )

@@ -83,6 +83,7 @@ class PolymarketRunner:
         clock: Callable[[], float] = time.time,
         recorder=None,
         trade: bool = True,
+        publisher=None,
     ):
         self.cfg = cfg
         self.gamma = gamma
@@ -96,8 +97,11 @@ class PolymarketRunner:
         self.clock = clock
         self.recorder = recorder
         self.trade = trade  # False = observe/record only, never execute
+        self.publisher = publisher
         self.active: Dict[str, MarketInfo] = {}
         self._last_discovery = 0.0
+        self._last_publish = 0.0
+        self._last_publish_error = 0.0
 
     # -- journal helpers -------------------------------------------------------
     def _journal(self, record: Dict) -> None:
@@ -276,7 +280,44 @@ class PolymarketRunner:
             "equity": equity,
         }
         self._journal(record)
+        self._maybe_publish(now)
         return record
+
+    def _maybe_publish(self, now: float) -> None:
+        """Push a live snapshot; failures never interrupt trading."""
+        if self.publisher is None or self.journal is None:
+            return
+        if now - self._last_publish < self.cfg.publish_every_s:
+            return
+        self._last_publish = now
+        try:
+            from wealth.polymarket.publisher import build_snapshot
+
+            state = {
+                "cash": self.executor.get_cash(),
+                "positions": {
+                    t: {"market_slug": p.market_slug, "size": p.size,
+                        "avg_price": p.avg_price}
+                    for t, p in self.executor.get_positions().items()
+                },
+                "meta": self.executor.meta,
+            }
+            snapshot = build_snapshot(self.journal.records(), state, self.cfg)
+            gist_id = self.publisher.publish(snapshot)
+            meta_id = self.executor.meta.get("publish_gist_id")
+            if meta_id != gist_id:
+                self.executor.meta["publish_gist_id"] = gist_id
+                if hasattr(self.executor, "save_meta"):
+                    self.executor.save_meta()
+                print(f"live view feed created: gist {gist_id} — open your "
+                      f"static page with ?gist={gist_id}")
+        except Exception as exc:  # noqa: BLE001
+            if now - self._last_publish_error > 300:  # don't spam the journal
+                self._last_publish_error = now
+                self._journal({
+                    "event": "publish_error", "timestamp": self._now_iso(now),
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
 
     def _safe_book(self, token_id: str) -> Optional[OrderBook]:
         try:

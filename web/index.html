@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>wealth · polymarket live</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb; --page: #f9f9f7;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #898781;
+    --grid: #e1e0d9; --baseline: #c3c2b7; --border: rgba(11,11,11,.10);
+    --series-1: #2a78d6; --good: #006300; --bad: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1: #1a1a19; --page: #0d0d0d;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-3: #898781;
+      --grid: #2c2c2a; --baseline: #383835; --border: rgba(255,255,255,.10);
+      --series-1: #3987e5; --good: #0ca30c; --bad: #e66767;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page); color: var(--ink-1);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 16px; display: flex; justify-content: center;
+  }
+  main { width: 100%; max-width: 760px; }
+  header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 4px 0 14px; }
+  h1 { font-size: 20px; font-weight: 700; }
+  .badge {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 3px 8px;
+    border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2);
+  }
+  .badge.live { color: #fff; background: var(--bad); border-color: transparent; }
+  .badge.stale { color: #fff; background: var(--ink-3); border-color: transparent; }
+  .updated { font-size: 12px; color: var(--ink-3); margin-left: auto; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px; margin-bottom: 12px;
+  }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .kpi .label { font-size: 12px; color: var(--ink-3); }
+  .kpi .value { font-size: 22px; font-weight: 700; }
+  .kpi .value.pos { color: var(--good); }
+  .kpi .value.neg { color: var(--bad); }
+  .section-title { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 2px 0 8px; }
+  .chart-wrap { position: relative; }
+  svg { display: block; width: 100%; height: auto; }
+  .tooltip {
+    position: absolute; pointer-events: none; display: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 9px; font-size: 12px; color: var(--ink-2); white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  }
+  .tooltip b { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--ink-3); font-weight: 500; font-size: 12px;
+       border-bottom: 1px solid var(--grid); padding: 4px 6px; }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--grid);
+       font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; }
+  th.num { text-align: right; }
+  .pnl-pos { color: var(--good); } .pnl-neg { color: var(--bad); }
+  .muted { color: var(--ink-3); }
+  .setup { text-align: center; padding: 28px 12px; }
+  .setup input {
+    width: 100%; max-width: 420px; margin: 10px 0; padding: 9px 12px; font: inherit;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--page); color: var(--ink-1);
+  }
+  .setup button {
+    padding: 9px 18px; font: inherit; font-weight: 600; border: none;
+    border-radius: 8px; background: var(--series-1); color: #fff; cursor: pointer;
+  }
+  footer { font-size: 11px; color: var(--ink-3); text-align: center; margin: 16px 0 4px; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<div class="tooltip" id="tip"></div>
+
+<script>
+"use strict";
+const $app = document.getElementById("app");
+const $tip = document.getElementById("tip");
+const FILE = "wealth-live.json";
+
+function gistId() {
+  const q = new URLSearchParams(location.search).get("gist");
+  if (q) { localStorage.setItem("wealth_gist", q); return q; }
+  return localStorage.getItem("wealth_gist");
+}
+
+function fmtMoney(v, dp = 2) {
+  if (v === null || v === undefined) return "—";
+  return "$" + Number(v).toLocaleString("en-US",
+    { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+const esc = s => String(s).replace(/[&<>"]/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function fetchSnapshot(id) {
+  try {  // GitHub API: uncached, 60 req/h per IP — fine at 1/min
+    const r = await fetch(`https://api.github.com/gists/${id}`, {
+      headers: { Accept: "application/vnd.github+json" } });
+    if (r.ok) {
+      const g = await r.json();
+      const f = g.files && g.files[FILE];
+      if (f) {
+        if (!f.truncated && f.content) return JSON.parse(f.content);
+        const raw = await fetch(f.raw_url);
+        if (raw.ok) return await raw.json();
+      }
+    }
+  } catch (e) { /* fall through to raw */ }
+  // Fallback: raw endpoint (CDN-cached ~5 min)
+  const raw = await fetch(`https://gist.githubusercontent.com/raw/${id}/${FILE}`);
+  if (!raw.ok) throw new Error(`gist fetch failed (${raw.status})`);
+  return await raw.json();
+}
+
+// ------------------------------------------------------------------ chart
+function equityChart(points) {
+  const W = 720, H = 240, padL = 54, padR = 10, padT = 12, padB = 24;
+  if (!points || points.length < 2)
+    return `<div class="muted">Not enough data for a chart yet.</div>`;
+  const vals = points.map(p => p[1]);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const x = i => padL + (i / (points.length - 1)) * (W - padL - padR);
+  const y = v => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+
+  let grid = "", labels = "";
+  for (let g = 0; g < 4; g++) {
+    const v = lo + ((g + 0.5) / 4) * (hi - lo), gy = y(v);
+    grid += `<line x1="${padL}" y1="${gy}" x2="${W - padR}" y2="${gy}"
+             stroke="var(--grid)" stroke-width="1"/>`;
+    labels += `<text x="${padL - 6}" y="${gy + 4}" text-anchor="end" font-size="11"
+               fill="var(--ink-3)">${Math.round(v).toLocaleString()}</text>`;
+  }
+  const line = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+  const area = `${line}L${x(points.length - 1).toFixed(1)},${H - padB}L${padL},${H - padB}Z`;
+  const t0 = (points[0][0] || "").slice(5, 16).replace("T", " ");
+  const t1 = (points[points.length - 1][0] || "").slice(5, 16).replace("T", " ");
+  return `
+  <div class="chart-wrap" id="chartwrap">
+    <svg viewBox="0 0 ${W} ${H}" id="chart" aria-label="Equity over time">
+      ${grid}${labels}
+      <path d="${area}" fill="var(--series-1)" opacity="0.16"/>
+      <path d="${line}" fill="none" stroke="var(--series-1)" stroke-width="2"/>
+      <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}"
+            stroke="var(--baseline)" stroke-width="1"/>
+      <text x="${padL}" y="${H - 7}" font-size="11" fill="var(--ink-3)">${esc(t0)}</text>
+      <text x="${W - padR}" y="${H - 7}" font-size="11" text-anchor="end"
+            fill="var(--ink-3)">${esc(t1)}</text>
+      <line id="xhair" y1="${padT}" y2="${H - padB}" stroke="var(--baseline)"
+            stroke-width="1" style="display:none"/>
+      <circle id="dot" r="4" fill="var(--series-1)" stroke="var(--surface-1)"
+              stroke-width="2" style="display:none"/>
+    </svg>
+  </div>`;
+}
+
+function wireChartHover(points) {
+  const svg = document.getElementById("chart");
+  if (!svg || !points || points.length < 2) return;
+  const wrap = document.getElementById("chartwrap");
+  const xhair = document.getElementById("xhair"), dot = document.getElementById("dot");
+  const W = 720, padL = 54, padR = 10;
+  const vals = points.map(p => p[1]);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+  const p8 = (hi - lo) * 0.08; lo -= p8; hi += p8;
+  const H = 240, padT = 12, padB = 24;
+  const yOf = v => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+
+  function onMove(ev) {
+    const rect = svg.getBoundingClientRect();
+    const cx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+    const sx = cx * (W / rect.width);
+    const frac = Math.min(1, Math.max(0, (sx - padL) / (W - padL - padR)));
+    const i = Math.round(frac * (points.length - 1));
+    const px = padL + (i / (points.length - 1)) * (W - padL - padR);
+    const py = yOf(points[i][1]);
+    xhair.setAttribute("x1", px); xhair.setAttribute("x2", px);
+    xhair.style.display = ""; dot.style.display = "";
+    dot.setAttribute("cx", px); dot.setAttribute("cy", py);
+    const ts = (points[i][0] || "").slice(0, 16).replace("T", " ");
+    $tip.innerHTML = `${esc(ts)}<br><b>${fmtMoney(points[i][1])}</b>`;
+    $tip.style.display = "block";
+    const wr = wrap.getBoundingClientRect();
+    let tx = (px / W) * wr.width + 12;
+    if (tx + $tip.offsetWidth > wr.width) tx -= $tip.offsetWidth + 24;
+    $tip.style.left = (wr.left + tx + window.scrollX) + "px";
+    $tip.style.top = (wr.top + (py / H) * wr.height - 40 + window.scrollY) + "px";
+  }
+  function onLeave() {
+    xhair.style.display = "none"; dot.style.display = "none"; $tip.style.display = "none";
+  }
+  svg.addEventListener("mousemove", onMove);
+  svg.addEventListener("touchmove", onMove, { passive: true });
+  svg.addEventListener("mouseleave", onLeave);
+  svg.addEventListener("touchend", onLeave);
+}
+
+// ------------------------------------------------------------------ render
+function kpi(label, value, tone) {
+  const cls = tone === undefined || tone === null ? "" : (tone >= 0 ? " pos" : " neg");
+  return `<div class="kpi"><div class="label">${esc(label)}</div>
+          <div class="value${cls}">${value}</div></div>`;
+}
+
+function render(s) {
+  const updated = s.updated_at ? new Date(s.updated_at) : null;
+  const ageMin = updated ? (Date.now() - updated.getTime()) / 60000 : null;
+  const stale = ageMin === null || ageMin > 3;
+  const k = s.kpis || {};
+  const winRate = k.win_rate === null || k.win_rate === undefined
+    ? "—" : Math.round(k.win_rate * 100) + "%";
+  const pnlSign = (k.realized_pnl ?? 0) >= 0 ? "+" : "";
+
+  const positions = (s.positions || []).map(p =>
+    `<tr><td>${esc(p.symbol)}</td><td class="num">${p.size}</td>
+     <td class="num">${Number(p.avg_price).toFixed(3)}</td></tr>`).join("");
+  const resolutions = (s.resolutions || []).slice().reverse().map(r => {
+    const up = r.outcome === "up";
+    const pnl = Number(r.pnl);
+    return `<tr>
+      <td class="muted">${esc((r.timestamp || "").slice(5, 16).replace("T", " "))}</td>
+      <td>${esc(r.slug)}</td>
+      <td>${up ? "▲ up" : "▼ down"}</td>
+      <td class="num ${pnl > 0 ? "pnl-pos" : pnl < 0 ? "pnl-neg" : "muted"}">
+        ${pnl > 0 ? "+" : ""}${pnl.toFixed(2)}</td></tr>`;
+  }).join("");
+  const fair = Object.entries(s.fair || {})
+    .map(([slug, p]) => `${esc(slug)} · P(up) <b>${Number(p).toFixed(2)}</b>`)
+    .join(" &nbsp;·&nbsp; ");
+  const blocks = Object.entries(s.risk_blocks || {}).sort((a, b) => b[1] - a[1])
+    .map(([r, n]) => `<tr><td>${esc(r)}</td><td class="num">${n}</td></tr>`).join("");
+
+  $app.innerHTML = `
+  <header>
+    <h1>wealth · BTC up/down</h1>
+    <span class="badge ${s.mode === "live" ? "live" : ""}">${s.mode === "live" ? "LIVE" : "PAPER"}</span>
+    ${stale ? '<span class="badge stale">STALE</span>' : ""}
+    <span class="updated">${updated
+      ? "updated " + (ageMin < 1.5 ? "just now" : Math.round(ageMin) + " min ago") : ""}</span>
+  </header>
+  <div class="card"><div class="kpis">
+    ${kpi("Equity", fmtMoney(k.equity))}
+    ${kpi("Realized PnL", pnlSign + fmtMoney(k.realized_pnl), k.realized_pnl)}
+    ${kpi("Win rate", winRate)}
+    ${kpi("Markets traded", (k.wins ?? 0) + (k.losses ?? 0))}
+  </div></div>
+  <div class="card">
+    <div class="section-title">Equity</div>
+    ${equityChart(s.equity_curve)}
+  </div>
+  ${s.spot ? `<div class="card">
+    <div class="section-title">Right now</div>
+    <div>BTC spot <b>${Number(s.spot).toLocaleString()}</b></div>
+    ${fair ? `<div class="muted" style="margin-top:4px">${fair}</div>` : ""}
+  </div>` : ""}
+  <div class="card">
+    <div class="section-title">Open positions</div>
+    ${positions
+      ? `<table><tr><th>market</th><th class="num">shares</th><th class="num">avg</th></tr>${positions}</table>`
+      : `<div class="muted">Flat — no open positions.</div>`}
+  </div>
+  <div class="card">
+    <div class="section-title">Recent resolutions</div>
+    ${resolutions
+      ? `<table><tr><th>time</th><th>market</th><th>outcome</th><th class="num">pnl</th></tr>${resolutions}</table>`
+      : `<div class="muted">No markets resolved yet.</div>`}
+  </div>
+  ${blocks ? `<div class="card">
+    <div class="section-title">Risk blocks</div>
+    <table><tr><th>reason</th><th class="num">count</th></tr>${blocks}</table>
+  </div>` : ""}
+  <footer>read-only paper/live snapshot · auto-refreshes every 60s</footer>`;
+  wireChartHover(s.equity_curve);
+}
+
+function renderSetup(msg) {
+  $app.innerHTML = `
+  <div class="card setup">
+    <h1>wealth · live view</h1>
+    <p class="muted" style="margin-top:6px">${esc(msg || "Paste the gist id printed by `wealth polymarket run` (with publish: true).")}</p>
+    <input id="gid" placeholder="gist id, e.g. 4f00…" autocomplete="off">
+    <br><button onclick="const v=document.getElementById('gid').value.trim();
+      if(v){localStorage.setItem('wealth_gist',v);location.search='?gist='+v;}">Connect</button>
+  </div>`;
+}
+
+async function refresh() {
+  const id = gistId();
+  if (!id) { renderSetup(); return; }
+  try {
+    render(await fetchSnapshot(id));
+  } catch (e) {
+    renderSetup(`Couldn't load snapshot for gist "${id}" — check the id and that the bot is publishing. (${e.message})`);
+  }
+}
+refresh();
+setInterval(refresh, 60_000);
+</script>
+</body>
+</html>

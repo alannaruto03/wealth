@@ -267,6 +267,54 @@ def test_observe_only_runner_never_trades(tmp_path):
     assert executor.get_cash() == pytest.approx(cfg.cash)
 
 
+class FakePublisher:
+    def __init__(self, fail=False):
+        self.snapshots = []
+        self.fail = fail
+
+    def publish(self, snapshot):
+        if self.fail:
+            raise ConnectionError("gist down")
+        self.snapshots.append(snapshot)
+        return "gist123"
+
+
+def test_runner_publishes_throttled(tmp_path):
+    runner, clock, gamma, clob, feed, executor, journal = build(tmp_path)
+    runner.publisher = FakePublisher()
+    gamma.markets = [make_market()]
+    clob.set("UP1", 0.49, 0.51)
+    clob.set("DN1", 0.47, 0.49)
+    runner.tick()          # publishes (first tick past throttle)
+    clock.t += 3
+    runner.tick()          # within publish_every_s -> no publish
+    clock.t += 61
+    runner.tick()          # publishes again
+    assert len(runner.publisher.snapshots) == 2
+    snap = runner.publisher.snapshots[-1]
+    assert "equity_curve" in snap and "kpis" in snap
+    # gist id persisted for reuse across restarts
+    assert executor.meta["publish_gist_id"] == "gist123"
+
+
+def test_runner_publish_failure_never_breaks_tick(tmp_path):
+    runner, clock, gamma, clob, feed, executor, journal = build(tmp_path)
+    runner.publisher = FakePublisher(fail=True)
+    gamma.markets = [make_market()]
+    clob.set("UP1", 0.49, 0.51)
+    clob.set("DN1", 0.47, 0.49)
+    rec = runner.tick()
+    assert rec["status"] in ("hold", "traded")  # tick completed fine
+    errors = [r for r in journal.records() if r.get("event") == "publish_error"]
+    assert len(errors) == 1
+    assert "gist down" in errors[0]["error"]
+    # error journaling is throttled too
+    clock.t += 61
+    runner.tick()
+    errors = [r for r in journal.records() if r.get("event") == "publish_error"]
+    assert len(errors) == 1
+
+
 def test_market_open_event_records_period_open(tmp_path):
     runner, clock, gamma, clob, feed, executor, journal = build(tmp_path)
     m = make_market()

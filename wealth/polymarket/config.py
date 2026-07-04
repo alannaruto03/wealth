@@ -46,6 +46,11 @@ class PolymarketConfig:
     state_dir: str = "state/polymarket"
     record_books: bool = False              # snapshot books to recordings/ while running
 
+    # live-view publishing (web/index.html on Vercel or any static host)
+    publish: bool = False                   # push snapshots to a secret GitHub gist
+    publish_every_s: float = 60.0
+    publish_token_env: str = "WEALTH_PUBLISH_TOKEN"
+
     # endpoints (overridable in tests)
     gamma_url: str = "https://gamma-api.polymarket.com"
     clob_url: str = "https://clob.polymarket.com"

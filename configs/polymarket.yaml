@@ -35,6 +35,11 @@ fee_bps: 0                  # Polymarket taker fee (0 as of mid-2026; verify)
 state_dir: state/polymarket
 record_books: false         # also snapshot books to recordings/ while running
 
+# live view from anywhere: push snapshots to a secret GitHub gist that the
+# static page in web/ (deploy to Vercel) reads. Needs WEALTH_PUBLISH_TOKEN.
+publish: false
+publish_every_s: 60
+
 # live-only (ignored on paper)
 order_type: FOK
 private_key_env: POLYMARKET_PRIVATE_KEY

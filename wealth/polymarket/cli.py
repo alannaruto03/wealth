@@ -70,9 +70,34 @@ def _build_runner(cfg: PolymarketConfig, with_recorder: bool = False,
 
         recorder = BookRecorder(cfg.recordings_dir)
 
+    publisher = _build_publisher(cfg, executor)
     journal = Journal(cfg.journal_path)
     return PolymarketRunner(cfg, gamma, clob, spot, executor,
-                            journal=journal, recorder=recorder, trade=trading)
+                            journal=journal, recorder=recorder, trade=trading,
+                            publisher=publisher)
+
+
+def _build_publisher(cfg: PolymarketConfig, executor):
+    """GistPublisher when publishing is on and a token exists; else None."""
+    if not cfg.publish:
+        return None
+    import os
+
+    token = os.environ.get(cfg.publish_token_env, "")
+    if not token:
+        print(f"publish: true but ${cfg.publish_token_env} is not set — "
+              "live-view publishing disabled for this run", file=sys.stderr)
+        return None
+    from wealth.polymarket.publisher import GistPublisher
+
+    gist_id = getattr(executor, "meta", {}).get("publish_gist_id")
+    publisher = GistPublisher(token, gist_id=gist_id)
+    if gist_id:
+        print(f"live view feed: gist {gist_id} — open your static page with ?gist={gist_id}")
+    else:
+        print("live view: a secret gist will be created on the first publish "
+              "(its id is printed then and saved in state)")
+    return publisher
 
 
 def cmd_run(args) -> int:
@@ -180,6 +205,44 @@ def cmd_replay(args) -> int:
     return 0
 
 
+def cmd_publish(args) -> int:
+    """One-shot snapshot publish — test the live-view feed without running the bot."""
+    cfg = PolymarketConfig.from_yaml(args.config)
+    import os
+
+    token = os.environ.get(cfg.publish_token_env, "")
+    if not token:
+        print(f"set ${cfg.publish_token_env} to a GitHub token with gist scope first",
+              file=sys.stderr)
+        return 1
+
+    import json
+
+    from wealth.live.journal import Journal
+    from wealth.polymarket.publisher import GistPublisher, build_snapshot
+
+    state = {}
+    if os.path.exists(cfg.state_path):
+        with open(cfg.state_path) as f:
+            state = json.load(f)
+    records = Journal(cfg.journal_path).records()
+    snapshot = build_snapshot(records, state, cfg)
+
+    publisher = GistPublisher(token, gist_id=state.get("meta", {}).get("publish_gist_id"))
+    gist_id = publisher.publish(snapshot)
+    # persist the id so the bot reuses this gist
+    state.setdefault("meta", {})["publish_gist_id"] = gist_id
+    os.makedirs(os.path.dirname(cfg.state_path) or ".", exist_ok=True)
+    with open(cfg.state_path, "w") as f:
+        json.dump(state, f, indent=2)
+
+    print(f"published snapshot ({len(snapshot['equity_curve'])} equity points, "
+          f"{snapshot['kpis']['resolved']} resolutions)")
+    print(f"gist id: {gist_id}")
+    print(f"open your deployed page as:  https://<your-project>.vercel.app/?gist={gist_id}")
+    return 0
+
+
 def cmd_report(args) -> int:
     cfg = PolymarketConfig.from_yaml(args.config)
     from wealth.live.journal import Journal
@@ -227,6 +290,10 @@ def add_subparser(sub) -> None:
     rep.add_argument("--file", required=True, help="recording JSONL from `record`")
     rep.add_argument("--journal", default=None, help="write replay journal here")
     rep.set_defaults(func=cmd_replay)
+
+    pub = pmsub.add_parser("publish", help="push one live-view snapshot to the gist feed")
+    pub.add_argument("--config", required=True)
+    pub.set_defaults(func=cmd_publish)
 
     report = pmsub.add_parser("report", help="summarize the bot journal")
     report.add_argument("--config", required=True)
