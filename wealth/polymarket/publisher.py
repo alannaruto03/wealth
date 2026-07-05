@@ -20,7 +20,7 @@ from wealth.polymarket.config import PolymarketConfig
 
 GIST_FILENAME = "wealth-live.json"
 MAX_EQUITY_POINTS = 500
-MAX_RESOLUTIONS = 30
+MAX_RESOLUTIONS = 100
 
 
 def _downsample(points: List[list], limit: int = MAX_EQUITY_POINTS) -> List[list]:
@@ -53,10 +53,15 @@ def build_snapshot(records: List[dict], state: Dict, cfg: PolymarketConfig) -> D
 
     equity_points: List[list] = []
     last_tick_ts = None
+    first_tick_ts = None
+    trades = 0
     for r in records:
         if r.get("event") == "tick" and r.get("equity") is not None:
             equity_points.append([r.get("timestamp"), round(float(r["equity"]), 2)])
             last_tick_ts = r.get("timestamp")
+            if first_tick_ts is None:
+                first_tick_ts = r.get("timestamp")
+            trades += len(r.get("orders") or [])
 
     resolutions = [
         {"timestamp": row["timestamp"], "slug": row["slug"],
@@ -67,9 +72,11 @@ def build_snapshot(records: List[dict], state: Dict, cfg: PolymarketConfig) -> D
     equity_now = equity_points[-1][1] if equity_points else float(state.get("cash", cfg.cash))
     return {
         "updated_at": last_tick_ts,
+        "started_at": first_tick_ts,
         "mode": cfg.mode,
         "series": cfg.series,
         "kpis": {
+            "trades": trades,
             "equity": equity_now,
             "cash": round(float(state.get("cash", cfg.cash)), 2),
             "realized_pnl": round(pv.realized_pnl, 2),

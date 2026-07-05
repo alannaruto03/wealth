@@ -47,7 +47,8 @@ def test_build_snapshot_schema():
         {"event": "market_open", "timestamp": "t0", "slug": "m1"},
         tick("2026-07-03T09:00:00+00:00", 1000.0, spot=100000.0, sigma=0.0005,
              fair={"m1": 0.55}),
-        tick("2026-07-03T09:01:00+00:00", 1010.0),
+        tick("2026-07-03T09:01:00+00:00", 1010.0,
+             orders=[{"symbol": "m1:UP", "side": "buy", "quantity": 10, "price": 0.5}]),
         {"event": "resolution", "timestamp": "2026-07-03T09:15:00+00:00",
          "slug": "m1", "outcome": "up", "pnl": 48.0},
         {"event": "risk_block", "reason": "exposure_cap"},
@@ -55,6 +56,8 @@ def test_build_snapshot_schema():
     cfg = PolymarketConfig()
     s = build_snapshot(records, STATE, cfg)
     assert s["updated_at"] == "2026-07-03T09:01:00+00:00"
+    assert s["started_at"] == "2026-07-03T09:00:00+00:00"
+    assert s["kpis"]["trades"] == 1
     assert s["mode"] == "paper"
     assert s["kpis"]["equity"] == 1010.0
     assert s["kpis"]["cash"] == 950.0
